@@ -4,6 +4,8 @@
 
 #include <scene/Node.hpp>
 #include <scene/Node3D.hpp>
+#include <scene/Camera3D.hpp>
+#include <scene/MeshInstance.hpp>
 #include <cstdio>
 #include <cmath>
 
@@ -173,6 +175,51 @@ int main()
         check(n3d->as<Node3D>() == n3d, "as<Node3D>: correct downcast");
         check(plain->as<Node3D>() == nullptr, "as<Node3D>: refuses a plain Node");
         check(n3d->as<Node>() != nullptr, "as<Node>: upcast always works");
+    }
+
+    // ---- Camera3D ----
+    {
+        Camera3D cam("cam");
+        cam.set_perspective(55.f, 0.1f, 100.f);
+        cam.set_aspect(16.f / 9.f);
+
+        // the rigid-inverse view must match Mat4::LookAt for the same pose
+        // (LookAt is already proven correct by the GL shadow/CSM tests)
+        cam.set_position(0.f, 3.f, 6.f);
+        cam.look_at(Vec3(0.f, 0.5f, 0.f));
+        Mat4 view = cam.get_view_matrix();
+        Mat4 ref = Mat4::LookAt(Vec3(0.f, 3.f, 6.f), Vec3(0.f, 0.5f, 0.f), Vec3(0.f, 1.f, 0.f));
+        bool same = true;
+        for (int i = 0; i < 16; ++i)
+            if (fabsf(view.x[i] - ref.x[i]) > 1e-4f) same = false;
+        check(same, "Camera3D: view matrix matches Mat4::LookAt");
+
+        // view of a camera attached to a moving parent follows the parent
+        Node3D rig("rig");
+        Camera3D* child = (Camera3D*)rig.add_child(new Camera3D("child"));
+        rig.set_position(10.f, 0.f, 0.f);
+        Mat4 v2 = child->get_view_matrix();
+        // world origin seen from a camera at (10,0,0) sits at x=-10 in view space
+        Vec3 originInView = v2 * Vec3(0.f, 0.f, 0.f);
+        check(near3(originInView, -10.f, 0.f, 0.f), "Camera3D: view follows a parent rig");
+
+        // projection cache invalidates on lens change
+        cam.set_aspect(1.f);
+        float a = cam.get_projection_matrix().x[0];
+        cam.set_aspect(2.f);
+        float b = cam.get_projection_matrix().x[0];
+        check(fabsf(a - 2.f * b) < 1e-4f, "Camera3D: projection rebuilds when aspect changes");
+    }
+
+    // ---- MeshInstance typing ----
+    {
+        Node root("root");
+        MeshInstance* mi = (MeshInstance*)root.add_child(new MeshInstance("mi"));
+        check(mi->is_a(NT_MESHINSTANCE) && mi->is_a(NT_NODE3D) && mi->is_a(NT_NODE),
+              "MeshInstance: is_a covers the whole chain");
+        check(root.get_child(0)->as<MeshInstance>() == mi, "MeshInstance: as<> from base pointer");
+        check(root.get_child(0)->as<Camera3D>() == nullptr,
+              "MeshInstance: not confused with Camera3D");
     }
 
     printf(g_failed == 0 ? "ALL SCENE TESTS PASSED\n" : "%d SCENE TESTS FAILED\n", g_failed);

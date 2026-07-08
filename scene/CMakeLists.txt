@@ -4,6 +4,7 @@ add_library(scene STATIC
     src/Node.cpp
     src/Node3D.cpp
     src/Mesh.cpp
+    src/Camera3D.cpp
 )
 
 target_include_directories(scene
