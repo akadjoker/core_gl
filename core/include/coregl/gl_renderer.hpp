@@ -5,6 +5,8 @@
 namespace gl
 {
 
+class FrameBuffer;
+
 // GPU query (occlusion, timer, primitives)
 class Query
 {
@@ -136,6 +138,27 @@ public:
 
     // Default framebuffer (screen)
     static void BindScreen();
+
+    // Copies a pixel rect from src into dst (nullptr = the default
+    // framebuffer / screen). Coordinates are pixels, (0,0) at the
+    // bottom-left of each target (OpenGL convention) — this mirrors
+    // glBlitFramebuffer directly. Source and destination rects may differ
+    // in size (the copy is scaled) or in shape (stretched). depth/stencil
+    // are always copied NEAREST regardless of `filter` (required by the GL
+    // spec — only color supports LINEAR). Typical uses: MSAA resolve,
+    // copying a depth buffer between passes, a cheap downsample step in a
+    // bloom chain. Afterwards dst is left as the current read+draw target
+    // (ReadPixels right after a blit reads from dst, as expected).
+    static void BlitFramebuffer(const FrameBuffer* src, const FrameBuffer* dst, int srcX0,
+                                int srcY0, int srcX1, int srcY1, int dstX0, int dstY0, int dstX1,
+                                int dstY1, bool color = true, bool depth = false,
+                                bool stencil = false, TextureFilter filter = TextureFilter::LINEAR);
+
+    // Convenience: copies the whole (0,0,w,h) rect of src into the whole
+    // (0,0,w,h) rect of dst (or the screen when dst == nullptr) at the same
+    // size — the common "resolve/copy this framebuffer" case.
+    static void BlitFramebuffer(const FrameBuffer& src, const FrameBuffer* dst, int w, int h,
+                                bool color = true, bool depth = false, bool stencil = false);
 
     // Stats
     static const RenderStats& GetStats();

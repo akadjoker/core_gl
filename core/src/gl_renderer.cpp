@@ -1,4 +1,5 @@
 #include "coregl/gl_renderer.hpp"
+#include "coregl/gl_framebuffer.hpp"
 #include "gl_platform.hpp"
 #include "gl_state.hpp"
 #include <cstddef>
@@ -629,6 +630,42 @@ void Renderer::MemoryBarrierAll()
 void Renderer::ReadPixels(int x, int y, int w, int h, void* out)
 {
     glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out);
+}
+
+void Renderer::BlitFramebuffer(const FrameBuffer* src, const FrameBuffer* dst, int srcX0, int srcY0,
+                               int srcX1, int srcY1, int dstX0, int dstY0, int dstX1, int dstY1,
+                               bool color, bool depth, bool stencil, TextureFilter filter)
+{
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, src ? src->GetHandle() : 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst ? dst->GetHandle() : 0);
+
+    GLbitfield mask = 0;
+    if (color) mask |= GL_COLOR_BUFFER_BIT;
+    if (depth) mask |= GL_DEPTH_BUFFER_BIT;
+    if (stencil) mask |= GL_STENCIL_BUFFER_BIT;
+
+    // the GL spec requires NEAREST for any blit that includes depth/stencil
+    GLenum glFilter =
+        (depth || stencil || filter == TextureFilter::NEAREST) ? GL_NEAREST : GL_LINEAR;
+    glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, glFilter);
+
+    // GL_READ_FRAMEBUFFER is still pointed at src — leaving it there would
+    // make the next ReadPixels() (which reads GL_READ_FRAMEBUFFER, not the
+    // combined GL_FRAMEBUFFER our cache tracks) silently read from the
+    // wrong target. Point both read and draw back at dst, the natural
+    // "keep working on what I just blitted into" state, and keep the cache
+    // in sync so a later Bind()/BindScreen() behaves correctly.
+    u32 dstId = dst ? dst->GetHandle() : 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, dstId);
+    s.boundFBO = dstId;
+    ++s.stats.fboSwitches;
+}
+
+void Renderer::BlitFramebuffer(const FrameBuffer& src, const FrameBuffer* dst, int w, int h,
+                               bool color, bool depth, bool stencil)
+{
+    BlitFramebuffer(&src, dst, 0, 0, w, h, 0, 0, w, h, color, depth, stencil,
+                    TextureFilter::NEAREST);
 }
 
 void Renderer::BindScreen()

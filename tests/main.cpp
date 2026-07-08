@@ -19,6 +19,7 @@
 #include "test_quad_verify.hpp"
 #include "test_gbuffer_view.hpp"
 #include "test_winding_verify.hpp"
+#include "test_blit_verify.hpp"
 #include "tutorial_01_triangle.hpp"
 #include "tutorial_02_texture.hpp"
 #include "tutorial_03_cube.hpp"
@@ -55,6 +56,7 @@ static const NamedTest kTests[] = {
     {"verify", test_batch_verify, "pixel-exact checks: batch geometry and text"},
     {"quadverify", test_quad_verify, "pixel-exact checks: DrawQuad placement"},
     {"windingverify", test_winding_verify, "checks triangle winding on every solid shape"},
+    {"blitverify", test_blit_verify, "pixel-exact checks: BlitFramebuffer scaling and rects"},
 };
 static const int kTestCount = (int)(sizeof(kTests) / sizeof(kTests[0]));
 
