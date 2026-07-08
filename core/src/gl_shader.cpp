@@ -278,4 +278,11 @@ void Shader::SetMat4(i32 location, const f32* m)
     glUniformMatrix4fv(location, 1, GL_FALSE, m);
 }
 
+void Shader::BindUniformBlock(const char* blockName, u32 bindingPoint)
+{
+    GLuint blockIndex = glGetUniformBlockIndex(id, blockName);
+    if (blockIndex == GL_INVALID_INDEX) return; // block not active in this program
+    glUniformBlockBinding(id, blockIndex, bindingPoint);
+}
+
 } // namespace gl

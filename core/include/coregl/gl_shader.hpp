@@ -21,7 +21,6 @@ public:
     Shader(const Shader&) = delete;
     Shader& operator=(const Shader&) = delete;
 
- 
     void Release();
 
     // Compiles one stage from GLSL source (must include #version).
@@ -57,6 +56,14 @@ public:
     // -1 if the uniform is not active in the linked program
     i32 GetLocation(const char* name) const;
     i32 GetAttribLocation(const char* name) const;
+
+    // Connects a "layout(std140) uniform <blockName> {...}" block declared in
+    // this program to a uniform-buffer binding point (see Buffer::BindBase).
+    // Any Buffer bound to that same point is read by every shader that
+    // called this with the same blockName + bindingPoint — set once after
+    // Link(), not per frame. No-op if the block isn't active in this program
+    // (e.g. optimized out for not being read).
+    void BindUniformBlock(const char* blockName, u32 bindingPoint);
     const char* GetLog() const { return log; }
     u32 GetHandle() const { return id; }
     bool IsValid() const { return id != 0; }
