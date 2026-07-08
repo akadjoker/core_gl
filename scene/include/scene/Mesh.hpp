@@ -5,9 +5,7 @@
 #include <coregl/gl_vertex_array.hpp>
 #include <vector>
 
-// Static mesh vertex: pos/normal/tangent.w/uv (48 bytes). The bitangent is
-// NOT stored — shaders reconstruct it: cross(normal, tangent.xyz) * tangent.w
-// (glTF convention).
+ 
 struct MeshVertex
 {
     Vec3 position;
@@ -27,9 +25,7 @@ struct Surface
     BoundingBox bounds;
 };
 
-// Static-geometry RESOURCE. It is not a node, doesn't draw itself, and knows
-// nothing about shaders/passes/GL state. A MeshManager will own these; the
-// renderer reads vao()+surfaces() and builds RenderItems.
+ 
 class Mesh
 {
 public:

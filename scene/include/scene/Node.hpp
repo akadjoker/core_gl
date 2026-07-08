@@ -3,14 +3,11 @@
 #include <string>
 #include <vector>
 
-// integer alias the original project's Config.hpp provided
+
 using u16 = unsigned short;
 
-// Tipo concreto de cada node. Substitui os virtuais asNode3D()/asMeshNode()
-// do core antigo: get_type() para o tipo exacto, is_a() para downcast seguro.
-// Novos tipos (Camera3D, MeshInstance, Sprite3D, Camera2D, Action, Controller...)
-// entram aqui à medida dos milestones.
-enum NodeType : u16
+
+enum NodeType : unsigned short
 {
     NT_NODE = 0,
     NT_NODE3D,
@@ -24,9 +21,6 @@ enum NodeType : u16
     NT_COUNT
 };
 
-// Base da árvore de cena: hierarquia + ciclo de vida. NÃO tem transform
-// (Actions/Timers/Controllers herdam daqui). Node3D acrescenta o transform.
-// Posse: o pai é dono dos filhos e destrói-os; remove_child() devolve a posse.
 class Node
 {
 public:
@@ -69,9 +63,7 @@ public:
     void propagate_ready();          // filhos primeiro, depois o próprio _ready()
     void propagate_update(float dt); // o próprio _update(), depois os filhos
 
-    // Engine-interno: um antepassado mexeu no transform; propaga para os
-    // descendentes. Público porque é chamado em Node* base ao longo da árvore;
-    // não chamar a partir de código de jogo. Node3D faz override.
+
     virtual void on_parent_transform_changed();
 
 protected:
