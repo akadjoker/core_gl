@@ -222,6 +222,28 @@ int main()
               "MeshInstance: not confused with Camera3D");
     }
 
+    // ---- frustum culling primitives ----
+    {
+        Mat4 proj = Mat4::Perspective(55.0, 1.7, 0.1, 300.0);
+        Mat4 view = Mat4::LookAt(Vec3(0.f, 6.f, 22.f), Vec3(0.f, 0.f, 0.f), Vec3(0.f, 1.f, 0.f));
+        Frustum f;
+        f.build(view, proj);
+
+        check(f.ContainsBox(BoundingBox(Vec3(-1.f, -1.f, -1.f), Vec3(1.f, 1.f, 1.f))),
+              "frustum: box dead ahead is visible");
+        check(!f.ContainsBox(BoundingBox(Vec3(-1.f, -1.f, 50.f), Vec3(1.f, 1.f, 52.f))),
+              "frustum: box behind the camera is culled");
+        check(f.ContainsBox(BoundingBox(Vec3(-40.f, 0.f, -40.f), Vec3(40.f, 0.f, 40.f))),
+              "frustum: huge intersecting box is visible");
+        check(!f.ContainsBox(BoundingBox(Vec3(-1.f, -1.f, -500.f), Vec3(1.f, 1.f, -498.f))),
+              "frustum: box beyond the far plane is culled");
+
+        BoundingBox t = BoundingBox::TransformBoundingBox(
+            BoundingBox(Vec3(-1.f, -1.f, -1.f), Vec3(1.f, 1.f, 1.f)), Mat4());
+        check(fabsf(t.min.x + 1.f) < 1e-4f && fabsf(t.max.x - 1.f) < 1e-4f,
+              "TransformBoundingBox: identity keeps bounds");
+    }
+
     printf(g_failed == 0 ? "ALL SCENE TESTS PASSED\n" : "%d SCENE TESTS FAILED\n", g_failed);
     return g_failed == 0 ? 0 : 1;
 }

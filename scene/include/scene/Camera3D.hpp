@@ -1,11 +1,7 @@
 #pragma once
 
 #include "scene/Node3D.hpp"
-
-// The camera is ONLY the lens (fov/near/far/projection). No behavior here:
-// navigation (free/orbit/fps) is a child Behavior that writes the transform.
-// view = rigid inverse of the world transform (position+rotation, scale
-// ignored), reusing Node3D's cached world rotation/position. Cached projection.
+ 
 enum class Projection
 {
     Perspective,
