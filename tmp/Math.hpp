@@ -20,6 +20,11 @@ const float ZeroEpsilon =
 const float M_INFINITY = 1.0e30f;
 
 #define powi(base, exp) (int)powf((float)(base), (float)(exp))
+inline int powi(int base, int exp)
+{
+    // Nota: Esta é uma implementação simples. Para expoentes negativos ou casos mais complexos, pode ser necessário mais lógica.
+    return static_cast<int>(powf(static_cast<float>(base), static_cast<float>(exp)));
+}
 
 #define ToRadians(x) (float)(((x) * Pi / 180.0f))
 #define ToDegrees(x) (float)(((x) * 180.0f / Pi))
