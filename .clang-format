@@ -1,0 +1,24 @@
+# coregl — style: braces always on a new line (Allman), 4 spaces
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++11
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+BreakBeforeBraces: Allman
+AccessModifierOffset: -4
+NamespaceIndentation: None
+IndentCaseLabels: true
+FixNamespaceComments: true
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+
+PointerAlignment: Left
+AlignConsecutiveAssignments: false
+AlignTrailingComments: true
+SortIncludes: false
