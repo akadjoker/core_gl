@@ -6,11 +6,14 @@
 #include <coregl/gl_core.hpp>
 #include <SDL2/SDL.h>
 #include <cstdio>
+#include <cstdlib>
+#include "gif_recorder.hpp"
 
 struct TestApp
 {
     SDL_Window* window = nullptr;
     SDL_GLContext context = nullptr;
+    GifRecorder gif;
 
     bool Create(const char* title, int w = 1024, int h = 600)
     {
@@ -54,17 +57,36 @@ struct TestApp
 
         printf("GL version : %s\n", gl::Renderer::GetVersionString());
         printf("GL renderer: %s\n", gl::Renderer::GetRendererString());
+
+        // COREGL_RECORD=1 starts GIF recording immediately, for scripted
+        // captures (F10 remains the interactive way to do this).
+        if (getenv("COREGL_RECORD"))
+        {
+            int dw, dh;
+            SDL_GL_GetDrawableSize(window, &dw, &dh);
+            gif.Start(dw, dh);
+        }
         return true;
     }
 
-    // Polls events; returns false when the test should stop (quit / ESC)
+    // Polls events; returns false when the test should stop (quit / ESC).
+    // F10 toggles GIF recording of the window (see gif_recorder.hpp).
     bool PollEvents()
     {
         SDL_Event ev;
         while (SDL_PollEvent(&ev))
         {
             if (ev.type == SDL_QUIT) return false;
-            if (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE) return false;
+            if (ev.type == SDL_KEYDOWN)
+            {
+                if (ev.key.keysym.sym == SDLK_ESCAPE) return false;
+                if (ev.key.keysym.sym == SDLK_F10)
+                {
+                    int w, h;
+                    SDL_GL_GetDrawableSize(window, &w, &h);
+                    gif.Toggle(w, h);
+                }
+            }
         }
         return true;
     }
@@ -76,10 +98,17 @@ struct TestApp
         gl::Renderer::Viewport(0, 0, w, h);
     }
 
-    void EndFrame() { SDL_GL_SwapWindow(window); }
+    // Captures the just-rendered backbuffer for the GIF recorder (if active)
+    // before it gets swapped, then presents the frame.
+    void EndFrame()
+    {
+        gif.Capture();
+        SDL_GL_SwapWindow(window);
+    }
 
     void Destroy()
     {
+        gif.Stop(); // flush a pending recording so it's never lost
         gl::Renderer::Shutdown();
         if (context) SDL_GL_DeleteContext(context);
         if (window) SDL_DestroyWindow(window);

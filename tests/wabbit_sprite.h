@@ -1,7 +1,7 @@
 #pragma once
 
-// wabbit_alpha.png (assets/) baked to raw RGBA8 32x32 — the classic
-// raylib/pixi bunnymark sprite. Regenerate with:
+// wabbit_alpha.png (assets/) baked to raw RGBA8 32x32 — the sprite used by
+// the bunnymark test. Regenerate with:
 //   convert assets/wabbit_alpha.png -depth 8 rgba:wabbit.rgba
 
 static const unsigned char kWabbitPixels[32 * 32 * 4] = {

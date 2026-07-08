@@ -31,7 +31,7 @@ public:
     // column-major 16 floats (ortho, perspective, whatever); applied at Render
     void SetProjection(const f32* mat4);
 
-    // Transform stack (rlgl-style), applied CPU-side to the vertices that
+    // Transform stack, applied CPU-side to the vertices that
     // follow. Composes in local space: Translate then Rotate draws rotated
     // around the translated origin.
     void PushMatrix();   // saves the current transform

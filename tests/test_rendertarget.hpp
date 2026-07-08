@@ -30,27 +30,19 @@ void main()
 }
 )";
 
-// fullscreen triangle from gl_VertexID — no VBO needed
-static const char* kPostVS = R"(#version 430 core
-out vec2 TexCoord;
-void main()
-{
-    vec2 uv = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-    TexCoord = uv;
-    gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
-}
-)";
-
+// The vertex stage needs nothing custom here, so the post pass just reuses
+// the library's built-in full-screen-triangle vertex shader (see
+// gl::Renderer::FullscreenTriangleShaderSource()) instead of writing one.
 static const char* kPostFS = R"(#version 430 core
-in vec2 TexCoord;
+in vec2 v_uv;
 out vec4 OutColor;
 uniform sampler2D u_scene;
 uniform float u_time;
 void main()
 {
-    vec2 uv = TexCoord + 0.01 * vec2(sin(u_time * 3.0 + TexCoord.y * 20.0), 0.0);
+    vec2 uv = v_uv + 0.01 * vec2(sin(u_time * 3.0 + v_uv.y * 20.0), 0.0);
     vec3 color = texture(u_scene, uv).rgb;
-    float d = distance(TexCoord, vec2(0.5));
+    float d = distance(v_uv, vec2(0.5));
     color *= 1.0 - 0.6 * d * d; // vignette
     OutColor = vec4(color, 1.0);
 }
@@ -64,7 +56,8 @@ inline int test_rendertarget(int maxFrames)
     gl::Shader scene, post;
     if (!scene.LoadFromString(gl::PipelineStage::VERTEX, kSceneVS) ||
         !scene.LoadFromString(gl::PipelineStage::FRAGMENT, kSceneFS) || !scene.Link() ||
-        !post.LoadFromString(gl::PipelineStage::VERTEX, kPostVS) ||
+        !post.LoadFromString(gl::PipelineStage::VERTEX,
+                             gl::Renderer::FullscreenTriangleShaderSource()) ||
         !post.LoadFromString(gl::PipelineStage::FRAGMENT, kPostFS) || !post.Link())
     {
         fprintf(stderr, "shader error: %s%s\n", scene.GetLog(), post.GetLog());
@@ -86,8 +79,6 @@ inline int test_rendertarget(int maxFrames)
     };
     gl::VertexArray vao;
     vao.AddVertexBuffer(vbo, layout, 2, 5 * sizeof(float));
-
-    gl::VertexArray emptyVao; // for the fullscreen gl_VertexID triangle
 
     // offscreen target: color + depth
     const int kSize = 512;
@@ -137,8 +128,7 @@ inline int test_rendertarget(int maxFrames)
         post.Bind();
         post.SetFloat(timeLoc, t);
         colorTex.Bind(0);
-        emptyVao.Bind();
-        gl::Renderer::Draw(gl::RenderPrimitive::TRIANGLES, 3);
+        gl::Renderer::DrawFullscreenTriangle();
 
         app.EndFrame();
         ++frame;

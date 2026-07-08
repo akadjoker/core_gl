@@ -104,6 +104,11 @@ struct State
     int major = 0, minor = 0;
     bool hasCompute = false;
 
+    // lazily created on first DrawFullscreenTriangle()/DrawQuad(); no
+    // attributes are ever enabled on it — both draws derive their geometry
+    // from gl_VertexID inside the vertex shader. Freed with the context.
+    u32 proceduralVAO = 0;
+
     RenderStats stats;
 };
 
@@ -466,13 +471,25 @@ static void countPrims(RenderPrimitive prim, u32 count, u32 instances)
     u64 n = 0;
     switch (prim)
     {
-        case RenderPrimitive::POINTS: n = count; break;
-        case RenderPrimitive::LINES: n = count / 2; break;
-        case RenderPrimitive::LINE_STRIP: n = count > 1 ? count - 1 : 0; break;
-        case RenderPrimitive::LINE_LOOP: n = count; break;
-        case RenderPrimitive::TRIANGLES: n = count / 3; break;
+        case RenderPrimitive::POINTS:
+            n = count;
+            break;
+        case RenderPrimitive::LINES:
+            n = count / 2;
+            break;
+        case RenderPrimitive::LINE_STRIP:
+            n = count > 1 ? count - 1 : 0;
+            break;
+        case RenderPrimitive::LINE_LOOP:
+            n = count;
+            break;
+        case RenderPrimitive::TRIANGLES:
+            n = count / 3;
+            break;
         case RenderPrimitive::TRIANGLE_STRIP:
-        case RenderPrimitive::TRIANGLE_FAN: n = count > 2 ? count - 2 : 0; break;
+        case RenderPrimitive::TRIANGLE_FAN:
+            n = count > 2 ? count - 2 : 0;
+            break;
     }
     n *= instances;
     if (prim == RenderPrimitive::POINTS)
@@ -515,6 +532,65 @@ void Renderer::DrawIndexedInstanced(RenderPrimitive prim, u32 indexCount, u32 in
     glDrawElementsInstanced(kPrimitive[(u8)prim], (GLsizei)indexCount, s.indexType, offset,
                             (GLsizei)instanceCount);
     ++s.stats.drawCalls;
+}
+
+static void ensureProceduralVAO()
+{
+    if (!s.proceduralVAO) glGenVertexArrays(1, &s.proceduralVAO);
+    state::BindVAO(s.proceduralVAO);
+}
+
+void Renderer::DrawFullscreenTriangle()
+{
+    ensureProceduralVAO();
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    ++s.stats.drawCalls;
+    countPrims(RenderPrimitive::TRIANGLES, 3, 1);
+}
+
+const char* Renderer::FullscreenTriangleShaderSource()
+{
+#if defined(CORE_GL_ES)
+    return "#version 300 es\n"
+#else
+    return "#version 430 core\n"
+#endif
+           "out vec2 v_uv;\n"
+           "void main()\n"
+           "{\n"
+           "    vec2 uv = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);\n"
+           "    v_uv = uv;\n"
+           "    gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);\n"
+           "}\n";
+}
+
+void Renderer::DrawQuad()
+{
+    ensureProceduralVAO();
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    ++s.stats.drawCalls;
+    countPrims(RenderPrimitive::TRIANGLE_STRIP, 4, 1);
+}
+
+const char* Renderer::QuadShaderSource()
+{
+#if defined(CORE_GL_ES)
+    return "#version 300 es\n"
+#else
+    return "#version 430 core\n"
+#endif
+           "uniform vec4 u_rect;       // x, y, w, h in target pixels, top-left origin\n"
+           "uniform vec2 u_targetSize; // target width/height in pixels\n"
+           "out vec2 v_uv;\n"
+           "void main()\n"
+           "{\n"
+           "    vec2 corner = vec2(float(gl_VertexID & 1), float((gl_VertexID >> 1) & 1));\n"
+           "    v_uv = corner;\n"
+           "    vec2 pixelPos = u_rect.xy + corner * u_rect.zw;\n"
+           "    vec2 ndc = pixelPos / u_targetSize * 2.0 - 1.0;\n"
+           "    ndc.y = -ndc.y; // pixel y grows down, NDC y grows up\n"
+           "    gl_Position = vec4(ndc, 0.0, 1.0);\n"
+           "}\n";
 }
 
 bool Renderer::HasComputeSupport()

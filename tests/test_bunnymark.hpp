@@ -1,14 +1,14 @@
 #pragma once
 
-// Bunnymark, raylib style: hold the mouse button to pour bunnies from the
-// cursor. vsync off.
+// Bunnymark: hold the mouse button to pour bunnies from the cursor.
+// vsync off.
 //   left held  -> +100 per frame      right held -> +1000 per frame
 //   key B      -> +1000               key N      -> +100
 //   key C      -> clear               ESC        -> quit
 // Non-interactive (numFrames > 0): starts with 100000 bunnies and reports fps.
 
 #include "test_common.hpp"
-#include "wabbit_sprite.h" // the real raylib bunny, baked from assets/wabbit_alpha.png
+#include "wabbit_sprite.h" // sprite baked from assets/wabbit_alpha.png
 
 #define BUNNY_MAX 1000000
 
@@ -92,7 +92,7 @@ inline int test_bunnymark(int maxFrames)
         }
         if (!running) break;
 
-        // raylib style: pour bunnies from the cursor while the button is held
+        // pour bunnies from the cursor while the button is held
         {
             int mx, my;
             gl::u32 buttons = SDL_GetMouseState(&mx, &my);

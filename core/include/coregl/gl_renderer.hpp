@@ -90,6 +90,40 @@ public:
     static void DrawIndexedInstanced(RenderPrimitive prim, u32 indexCount, u32 instanceCount,
                                      u32 firstIndex = 0);
 
+    // Post-processing primitive: draws a single triangle covering the whole
+    // current viewport, with no bound vertex buffers (position/UV are
+    // derived from gl_VertexID — see FullscreenTriangleShaderSource). Bind
+    // your shader and input texture(s) first. No VAO to create, no geometry
+    // to upload. Only correct when the effect covers the entire target —
+    // for a positioned sub-rect (split-screen, picture-in-picture, a UI
+    // panel), use DrawQuad() instead: changing the viewport to "place" a
+    // fullscreen triangle is wrong, since the triangle's extra area is
+    // clipped at the viewport edges, not at the rect you actually wanted.
+    static void DrawFullscreenTriangle();
+
+    // Ready-to-use vertex shader source for DrawFullscreenTriangle(): declares
+    // "out vec2 v_uv" in [0,1] and needs no attributes/uniforms. Pass it
+    // straight to Shader::LoadFromString(VERTEX, ...) if your post pass
+    // doesn't need a custom vertex stage; write your own if it does (e.g. to
+    // output multiple UV sets).
+    static const char* FullscreenTriangleShaderSource();
+
+    // Positioned-quad primitive: draws 4 procedural vertices as a triangle
+    // strip (real geometry, not a clipped triangle), no bound vertex
+    // buffers. Where the quad actually ends up on screen is entirely up to
+    // the bound vertex shader's own uniforms (e.g. QuadShaderSource()'s
+    // u_rect/u_targetSize, set through your own Shader — Renderer never
+    // touches uniforms). Use this for anything that isn't the whole target:
+    // split-screen, picture-in-picture, a UI panel with a custom shader.
+    static void DrawQuad();
+
+    // Ready-to-use vertex shader source for DrawQuad(): reads "uniform vec4
+    // u_rect" (x, y, w, h in target pixels, top-left origin) and "uniform
+    // vec2 u_targetSize" (target width/height in pixels), and outputs
+    // "out vec2 v_uv" in [0,1] across that rect. Set both uniforms through
+    // your Shader (GetLocation + SetVec4/SetVec2) before calling DrawQuad().
+    static const char* QuadShaderSource();
+
     // Compute (desktop GL 4.3+ / ES 3.1; no-op elsewhere)
     static bool HasComputeSupport();
     static void Dispatch(u32 groupsX, u32 groupsY = 1, u32 groupsZ = 1);

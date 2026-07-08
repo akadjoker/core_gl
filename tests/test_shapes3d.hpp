@@ -70,7 +70,9 @@ inline int test_shapes3d(int maxFrames)
     }
 
     gl::Renderer::ClearColor(0.07f, 0.08f, 0.11f, 1.f);
-    gl::Renderer::SetCull(gl::CullMode::NONE); // batch solids are not wound consistently
+    // all Batch solids are wound CCW as seen from outside — see
+    // test_winding_verify.hpp — so normal backface culling is safe here
+    gl::Renderer::SetCull(gl::CullMode::BACK);
 
     int frame = 0;
     while (app.PollEvents())
