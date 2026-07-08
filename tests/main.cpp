@@ -23,6 +23,8 @@
 #include "test_ubo_verify.hpp"
 #include "test_texturearray_verify.hpp"
 #include "test_msaa_verify.hpp"
+#include "test_shadowmap.hpp"
+#include "test_csm.hpp"
 #include "tutorial_01_triangle.hpp"
 #include "tutorial_02_texture.hpp"
 #include "tutorial_03_cube.hpp"
@@ -64,6 +66,9 @@ static const NamedTest kTests[] = {
     {"arrayverify", test_texturearray_verify,
      "pixel-exact checks: texture arrays + layer render targets"},
     {"msaaverify", test_msaa_verify, "checks MSAA resolve actually blends edges"},
+    {"shadowmap", test_shadowmap, "plane + cube with a real-time orbiting-light shadow map"},
+    {"csm", test_csm, "cascaded shadow maps (first step)"},
+ 
 };
 static const int kTestCount = (int)(sizeof(kTests) / sizeof(kTests[0]));
 
