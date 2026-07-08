@@ -4,6 +4,7 @@ add_library(coregl STATIC
     src/gl_buffer.cpp
     src/gl_vertex_array.cpp
     src/gl_texture.cpp
+    src/gl_renderbuffer.cpp
     src/gl_framebuffer.cpp
     src/gl_batch.cpp
 )

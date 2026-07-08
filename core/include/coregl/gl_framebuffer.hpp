@@ -6,6 +6,7 @@ namespace gl
 {
 
 class Texture;
+class RenderBuffer;
 
 class FrameBuffer
 {
@@ -36,6 +37,15 @@ public:
 
     // face: 0..5 (+X, -X, +Y, -Y, +Z, -Z)
     void AttachCubeFace(const Texture& tex, Attachment attachment, u32 face, u32 mipLevel = 0);
+
+    // one layer of a 2D array texture (Texture::LoadArray/LoadDepthArray) —
+    // e.g. render cascade N of a shadow map array by attaching layer N
+    void AttachTextureLayer(const Texture& tex, Attachment attachment, u32 layer, u32 mipLevel = 0);
+
+    // MSAA and other write-only attachments — see RenderBuffer. Renderbuffer
+    // attachments can never be sampled in a shader; resolve with
+    // Renderer::BlitFramebuffer into a Texture-backed FrameBuffer first.
+    void AttachRenderBuffer(const RenderBuffer& rb, Attachment attachment);
 
     void Detach(Attachment attachment);
 

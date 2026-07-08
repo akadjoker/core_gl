@@ -1,5 +1,6 @@
 #include "coregl/gl_framebuffer.hpp"
 #include "coregl/gl_texture.hpp"
+#include "coregl/gl_renderbuffer.hpp"
 #include "gl_platform.hpp"
 #include "gl_state.hpp"
 
@@ -84,6 +85,27 @@ void FrameBuffer::AttachCubeFace(const Texture& tex, Attachment attachment, u32 
     glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentPoint(attachment),
                            GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, tex.GetHandle(), (GLint)mipLevel);
     attachments[(u8)attachment].texId = tex.GetHandle();
+    attachments[(u8)attachment].used = 1;
+}
+
+void FrameBuffer::AttachTextureLayer(const Texture& tex, Attachment attachment, u32 layer,
+                                     u32 mipLevel)
+{
+    ensureFBO(id);
+    state::BindFBO(id);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, attachmentPoint(attachment), tex.GetHandle(),
+                              (GLint)mipLevel, (GLint)layer);
+    attachments[(u8)attachment].texId = tex.GetHandle();
+    attachments[(u8)attachment].used = 1;
+}
+
+void FrameBuffer::AttachRenderBuffer(const RenderBuffer& rb, Attachment attachment)
+{
+    ensureFBO(id);
+    state::BindFBO(id);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachmentPoint(attachment), GL_RENDERBUFFER,
+                              rb.GetHandle());
+    attachments[(u8)attachment].texId = rb.GetHandle();
     attachments[(u8)attachment].used = 1;
 }
 

@@ -21,7 +21,6 @@ public:
     VertexArray(const VertexArray&) = delete;
     VertexArray& operator=(const VertexArray&) = delete;
 
- 
     void Release();
 
     void Bind();

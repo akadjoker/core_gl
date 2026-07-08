@@ -35,6 +35,18 @@ enum class TextureWrap : u8
     CLAMP_TO_BORDER
 };
 
+// Per-channel remap for Texture::SetSwizzle (e.g. a single-channel R8 height
+// map sampled as .rrr1 by every shader that expects RGBA)
+enum class TextureSwizzle : u8
+{
+    RED,
+    GREEN,
+    BLUE,
+    ALPHA,
+    ZERO,
+    ONE
+};
+
 enum class TextureFilter : u8
 {
     NEAREST,

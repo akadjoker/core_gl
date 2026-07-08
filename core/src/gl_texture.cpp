@@ -57,7 +57,7 @@ void Texture::Release()
     if (id && state::ContextAlive()) glDeleteTextures(1, &id);
     id = 0;
     target = 0;
-    width = height = 0;
+    width = height = layers = 0;
 }
 
 Texture::~Texture()
@@ -67,7 +67,7 @@ Texture::~Texture()
 
 Texture::Texture(Texture&& other) noexcept
     : id(other.id), target(other.target), width(other.width), height(other.height),
-      format(other.format)
+      layers(other.layers), format(other.format)
 {
     other.id = 0;
 }
@@ -81,6 +81,7 @@ Texture& Texture::operator=(Texture&& other) noexcept
         target = other.target;
         width = other.width;
         height = other.height;
+        layers = other.layers;
         format = other.format;
         other.id = 0;
     }
@@ -90,6 +91,11 @@ Texture& Texture::operator=(Texture&& other) noexcept
 bool Texture::IsCube() const
 {
     return target == GL_TEXTURE_CUBE_MAP;
+}
+
+bool Texture::IsArray() const
+{
+    return target == GL_TEXTURE_2D_ARRAY;
 }
 
 // creates (or recreates) the GL object and binds it to unit 0 for setup
@@ -176,6 +182,39 @@ void Texture::LoadDepthCube(int size, TextureFormat fmt)
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 }
 
+void Texture::LoadArray(const void* data, int w, int h, int layerCount, TextureFormat fmt)
+{
+    createAndBind(id, target, GL_TEXTURE_2D_ARRAY);
+    width = w;
+    height = h;
+    layers = layerCount;
+    format = fmt;
+
+    const FormatInfo& f = kFormat[(u8)fmt];
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, f.internal, w, h, layerCount, 0, f.format, f.type, data);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+void Texture::LoadDepthArray(int w, int h, int layerCount, TextureFormat fmt)
+{
+    createAndBind(id, target, GL_TEXTURE_2D_ARRAY);
+    width = w;
+    height = h;
+    layers = layerCount;
+    format = fmt;
+
+    const FormatInfo& f = kFormat[(u8)fmt];
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, f.internal, w, h, layerCount, 0, f.format, f.type,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
 void Texture::Bind(u32 unit)
 {
     if (id) state::BindTexture(unit, target, id);
@@ -203,11 +242,29 @@ void Texture::SetFilter(TextureFilter minFilter, TextureFilter magFilter)
     glTexParameteri(target, GL_TEXTURE_MAG_FILTER, kFilter[(u8)magFilter]);
 }
 
+void Texture::SetSwizzle(TextureSwizzle r, TextureSwizzle g, TextureSwizzle b, TextureSwizzle a)
+{
+    if (!id) return;
+    static const GLenum kSwizzle[] = {GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA, GL_ZERO, GL_ONE};
+    state::BindTexture(0, target, id);
+    GLint mask[4] = {(GLint)kSwizzle[(u8)r], (GLint)kSwizzle[(u8)g], (GLint)kSwizzle[(u8)b],
+                     (GLint)kSwizzle[(u8)a]};
+    glTexParameteriv(target, GL_TEXTURE_SWIZZLE_RGBA, mask);
+}
+
 void Texture::GenerateMipmaps()
 {
     if (!id) return;
     state::BindTexture(0, target, id);
     glGenerateMipmap(target);
+}
+
+void Texture::UploadMipLevel(u32 level, const void* data, int w, int h)
+{
+    if (!id) return;
+    state::BindTexture(0, target, id);
+    const FormatInfo& f = kFormat[(u8)format];
+    glTexImage2D(target, (GLint)level, f.internal, w, h, 0, f.format, f.type, data);
 }
 
 } // namespace gl

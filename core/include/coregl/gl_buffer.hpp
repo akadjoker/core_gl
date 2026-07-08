@@ -21,7 +21,6 @@ public:
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
 
- 
     void Release();
 
     // Creates the buffer and allocates byteSize bytes; data may be nullptr (reserve only)
