@@ -1,14 +1,7 @@
 #pragma once
 
-// Math library for the test/example project — not part of core_gl (the
-// library itself stays math-free by design; see gl_batch.hpp/gl_renderer.hpp
-// which all take raw column-major float[16] arrays).
-//
-// Standalone here: the only things the original project's Config.hpp
-// supplied that this file actually needs are the `u32` typedef and a debug
-// break on division-by-zero-style checks (no-op in this project — the
-// original asserted in debug builds; add your own if you want that back).
 using u32 = unsigned int;
+using u16 = unsigned short;
 #ifndef DEBUG_BREAK_IF
 #define DEBUG_BREAK_IF(cond) ((void)0)
 #endif

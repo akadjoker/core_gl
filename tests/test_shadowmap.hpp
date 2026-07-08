@@ -11,7 +11,7 @@
 // rolled helpers (see tutorial_math.hpp for that style).
 
 #include "test_common.hpp"
-#include "math/Math.hpp"
+#include <scene/Math.hpp>
 
 static const char* kShadowDepthVS = R"(#version 430 core
 layout(location = 0) in vec3 a_position;

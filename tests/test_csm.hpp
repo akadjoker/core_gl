@@ -25,7 +25,7 @@
 // 6. cascadeMatrix = ortho(AABB) * lightView
 
 #include "test_common.hpp"
-#include "math/Math.hpp"
+#include <scene/Math.hpp>
 
 #define CSM_CASCADES 4
 

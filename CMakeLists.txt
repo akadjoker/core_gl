@@ -12,7 +12,9 @@ endif()
 option(COREGL_BUILD_TESTS "Build coregl tests" ON)
 
 add_subdirectory(core)
+add_subdirectory(scene)
 
 if(COREGL_BUILD_TESTS)
     add_subdirectory(tests)
+    add_subdirectory(scene_tests)
 endif()
