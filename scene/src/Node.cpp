@@ -95,6 +95,13 @@ void Node::propagate_update(float dt)
         child->propagate_update(dt);
 }
 
+void Node::propagate_release_gpu()
+{
+    for (Node* child : m_children)
+        child->propagate_release_gpu();
+    _release_gpu();
+}
+
 void Node::on_parent_transform_changed()
 {
     // plain Node has no transform of its own, but 3D descendants deeper in

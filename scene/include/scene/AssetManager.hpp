@@ -16,11 +16,15 @@ public:
     void release();
 
     gl::Texture* loadTexture(const char* name, const char* path, bool sRGB = false);
+    // registers an empty texture owned by the manager — for procedurally
+    // generated content (the caller fills it with Load2D/LoadArray/...)
+    gl::Texture* createTexture(const char* name);
     gl::Texture* getTexture(const char* name);
     void unloadTexture(const char* name);
 
     gl::Shader* loadShader(const char* name, const char* vertPath, const char* fragPath);
-    gl::Shader* loadShaderFromString(const char* name, const char* vertSource, const char* fragSource);
+    gl::Shader* loadShaderFromString(const char* name, const char* vertSource,
+                                     const char* fragSource);
     gl::Shader* getShader(const char* name);
     void unloadShader(const char* name);
 

@@ -7,10 +7,12 @@
 namespace gl
 {
 class VertexArray;
-}
+class Texture;
+} // namespace gl
 class Material;
 class Camera3D;
- 
+class Mesh;
+
 struct RenderItem
 {
     gl::VertexArray* vao = nullptr;
@@ -22,7 +24,6 @@ struct RenderItem
     u32 skin_count = 0;
 };
 
- 
 class Scene
 {
 public:
@@ -36,6 +37,17 @@ public:
     // lifecycle fan-out over the whole tree
     void ready();
     void update(float dt);
+
+    // ── scene-owned resources ──
+    // Meshes and materials created here belong to the scene: no naked new in
+    // game code, and one release_gpu() call frees every GL object (owned
+    // meshes + node GPU sides like water targets). Textures live in the
+    // AssetManager, not here. Call release_gpu() before the GL context dies;
+    // the destructor only frees CPU memory.
+    Mesh* create_mesh();
+    Material* create_material();
+    Material* create_material(float r, float g, float b);
+    void release_gpu();
 
     // ── cameras ──
     // Cameras are ordinary nodes in the tree; the scene tracks which one is
@@ -60,4 +72,6 @@ private:
 
     Node* m_root;
     Camera3D* m_active_camera = nullptr;
+    std::vector<Mesh*> m_meshes;
+    std::vector<Material*> m_materials;
 };

@@ -2,6 +2,7 @@
 
 #include "scene/Math.hpp"
 #include "scene/Scene.hpp"
+#include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
 #include <vector>
@@ -12,6 +13,7 @@ class FrameBuffer;
 }
 class Camera3D;
 class WaterNode;
+class LightNode;
 
 // Draws a Scene. This is the engine-side boundary: game code builds the node
 // tree and calls render() — it never touches coregl directly.
@@ -35,6 +37,14 @@ public:
 
     void set_clear_color(float r, float g, float b);
     void set_light_dir(const Vec3& dir); // direction the light travels
+
+    // ── directional-light shadows (CSM) ──
+    // Call once after init(). Splits the camera frustum into `cascades`
+    // slices, each with its own depth map layer fitted tightly around it
+    // (texel-snapped). `distance` caps how far shadows reach — smaller
+    // means sharper shadows for the same resolution.
+    bool enable_shadows(int cascades = 4, int resolution = 2048, float distance = 200.f);
+    void set_show_cascades(bool on) { m_show_cascades = on; } // debug tint
 
     // one full frame: extra views (water reflection/refraction), then the
     // main view from the scene's active camera. viewport_w/h set the camera
@@ -61,9 +71,14 @@ private:
         Vec4 clip_plane = Vec4(0.f, 0.f, 0.f, 1.f);
         bool use_clip = false;
         bool mirrored = false; // planar reflection: flips front-face winding
+        Vec3 cam_pos;          // eye position for this view (specular)
     };
 
     void draw_view(Scene& scene, const RenderView& v);
+    void draw_shadow_views(Scene& scene, Camera3D* camera);
+    void draw_light_shadows(Scene& scene); // point cubemaps + spot maps
+    void set_light_uniforms();
+    static void collect_lights(Node* node, std::vector<LightNode*>& out);
     void draw_water_surfaces(const Mat4& viewProj, const Vec3& cameraPos, float camNear,
                              float camFar);
     void draw_debug_views(int viewport_w, int viewport_h);
@@ -73,10 +88,50 @@ private:
     gl::Shader m_forward;
     gl::i32 m_locModel = -1;
     gl::i32 m_locViewProj = -1;
+    gl::i32 m_locView = -1;
     gl::i32 m_locColor = -1;
     gl::i32 m_locLightDir = -1;
     gl::i32 m_locClipPlane = -1;
     gl::i32 m_locUnlit = -1;
+    gl::i32 m_locCameraPos = -1;
+    gl::i32 m_locSpecular = -1;
+    gl::i32 m_locCascadeMat0 = -1;
+    gl::i32 m_locSplits0 = -1;
+    gl::i32 m_locCascadeCount = -1;
+    gl::i32 m_locShowCascades = -1;
+    gl::i32 m_locShadowSize = -1;
+
+    // shadow pass (CSM): depth-only views into a depth array, one layer per
+    // cascade, consumed by the forward shader
+    gl::Shader m_depth;
+    gl::i32 m_locDepthMVP = -1;
+    gl::Texture m_shadowTex;
+    gl::FrameBuffer m_shadowFbo;
+    int m_cascades = 0; // 0 = shadows disabled
+    int m_shadowSize = 0;
+    float m_shadow_distance = 200.f;
+    float m_splits[5] = {};
+    Mat4 m_cascadeMat[4];
+    bool m_show_cascades = false;
+    std::vector<RenderItem> m_shadow_items; // reused across frames
+
+    // local lights (point/spot): depth pass writing linear distance
+    gl::Shader m_pointDepth;
+    gl::i32 m_locPDModel = -1;
+    gl::i32 m_locPDLightVP = -1;
+    gl::i32 m_locPDLightPos = -1;
+    gl::i32 m_locPDRange = -1;
+    gl::i32 m_locPointCount = -1;
+    gl::i32 m_locPointPosRange0 = -1;
+    gl::i32 m_locPointColor0 = -1;
+    gl::i32 m_locSpotCount = -1;
+    gl::i32 m_locSpotPosRange0 = -1;
+    gl::i32 m_locSpotDirInner0 = -1;
+    gl::i32 m_locSpotColorOuter0 = -1;
+    gl::i32 m_locSpotShadowSlot0 = -1;
+    gl::i32 m_locSpotShadowMat0 = -1;
+    std::vector<LightNode*> m_lights; // reused across frames
+    Mat4 m_spotShadowMat[2];
 
     // water surface pass
     gl::Shader m_water;

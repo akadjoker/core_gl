@@ -1,153 +1,90 @@
 #include "scene/SceneRenderer.hpp"
 #include "scene/Camera3D.hpp"
+#include "scene/LightNode.hpp"
 #include "scene/Material.hpp"
 #include "scene/WaterNode.hpp"
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_renderer.hpp>
 #include <coregl/gl_vertex_array.hpp>
 
-// ── built-in forward shader (lambert + ambient, diffuse map, clip plane) ──
-// All shader bodies are version-less: Renderer::ShaderHeader() is prepended
-// at init, providing the right GLSL version, precision and clip macros for
-// the platform (desktop GL / ES / WebGL2).
-static const char* kFwdVS = R"(
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec4 a_tangent;
-layout(location = 3) in vec2 a_uv;
-uniform mat4 u_model;
-uniform mat4 u_viewProj;
-uniform vec4 u_clipPlane;
-out vec3 v_normal;
-out vec2 v_uv;
-CLIP_VARYING
-void main()
-{
-    vec4 worldPos = u_model * vec4(a_position, 1.0);
-    v_normal = normalize(mat3(u_model) * a_normal);
-    v_uv = a_uv;
-    CLIP_SETUP(dot(worldPos, u_clipPlane));
-    gl_Position = u_viewProj * worldPos;
-}
-)";
+#include "SceneShaders.hpp"
 
-static const char* kFwdFS = R"(
-in vec3 v_normal;
-in vec2 v_uv;
-out vec4 OutColor;
-uniform vec3 u_baseColor;
-uniform vec3 u_lightDir;
-uniform float u_unlit;
-uniform sampler2D u_diffuse;
-CLIP_VARYING
-void main()
-{
-    CLIP_APPLY;
-    vec3 albedo = texture(u_diffuse, v_uv).rgb * u_baseColor;
-    float diffuse = max(dot(normalize(v_normal), -u_lightDir), 0.0);
-    float light = mix(0.30 + 0.70 * diffuse, 1.0, u_unlit);
-    OutColor = vec4(albedo * light, 1.0);
-}
-)";
+// ── CSM cascade fitting ──────────────────────────────────────────────────
 
-// ── water surface shader: projective reflection/refraction + fresnel ──
-static const char* kWaterVS = R"(
-layout(location = 0) in vec3 a_position;
-layout(location = 3) in vec2 a_uv;
-uniform mat4 u_model;
-uniform mat4 u_viewProj;
-uniform float u_tiling;
-out vec4 v_clip;
-out vec2 v_uv;
-out vec3 v_world;
-void main()
+// split distances: log/uniform blend (finer slices near the camera)
+static void csmSplits(float nearClip, float farClip, float* splits, int numCascades)
 {
-    vec4 worldPos = u_model * vec4(a_position, 1.0);
-    v_world = worldPos.xyz;
-    v_uv = a_uv * u_tiling;
-    v_clip = u_viewProj * worldPos;
-    gl_Position = v_clip;
-}
-)";
-
-static const char* kWaterFS = R"(
-in vec4 v_clip;
-in vec2 v_uv;
-in vec3 v_world;
-out vec4 OutColor;
-uniform sampler2D u_reflection;
-uniform sampler2D u_refraction;
-uniform sampler2D u_refractionDepth;
-uniform vec3 u_cameraPos;
-uniform vec3 u_lightDir;
-uniform vec3 u_waterColor;
-uniform float u_time;
-uniform float u_distortion;
-uniform float u_colorMix;
-uniform vec2 u_camPlanes; // near, far — to linearize depth
-
-float linearDepth(float d)
-{
-    float z = d * 2.0 - 1.0;
-    return 2.0 * u_camPlanes.x * u_camPlanes.y /
-           (u_camPlanes.y + u_camPlanes.x - z * (u_camPlanes.y - u_camPlanes.x));
+    float logBase = logf(farClip / nearClip) / (float)numCascades;
+    float uniformStep = 1.0f / (float)numCascades;
+    splits[0] = nearClip;
+    for (int i = 1; i <= numCascades; ++i)
+    {
+        float logSplit = nearClip * expf(logBase * (float)i);
+        float unifSplit = nearClip + uniformStep * (float)i * (farClip - nearClip);
+        float blend = (float)i / (float)numCascades;
+        splits[i] = logSplit + (unifSplit - logSplit) * (blend * 0.5f);
+    }
 }
 
-void main()
+// one cascade's lightProjection * lightView:
+// 1. unproject this slice's 8 frustum corners to world space
+// 2. light view looks at their center along the sun direction
+// 3. tight light-space AABB, Z range extended so casters outside the slice
+//    (toward the sun, or just behind the camera) still land in the map
+// 4. AABB snapped to shadow-texel steps: the ortho window moves in whole
+//    texels as the camera moves, so shadow edges don't shimmer
+static Mat4 csmCascadeMatrix(int cascade, float aspect, float fovDeg, const Mat4& view,
+                             const float* splits, const Vec3& lightDir, float shadowMapSize)
 {
-    vec2 ndc = (v_clip.xy / v_clip.w) * 0.5 + 0.5;
+    Mat4 projection = Mat4::Perspective((double)fovDeg, (double)aspect, (double)splits[cascade],
+                                        (double)splits[cascade + 1]);
+    Mat4 invViewProj = Mat4::Inverse(projection * view);
 
-    // per-pixel water depth: distance from the surface down to whatever the
-    // refraction view saw at this pixel
-    float floorDist = linearDepth(texture(u_refractionDepth, ndc).r);
-    float waterDist = linearDepth(gl_FragCoord.z);
-    float waterDepth = floorDist - waterDist;
-    // shoreline factor: 0 right at the shore, 1 in open water
-    float soft = clamp(waterDepth / 1.5, 0.0, 1.0);
+    Vec4 corners[8] = {
+        Vec4(-1.f, -1.f, -1.f, 1.f), Vec4(-1.f, -1.f, 1.f, 1.f), Vec4(-1.f, 1.f, -1.f, 1.f),
+        Vec4(-1.f, 1.f, 1.f, 1.f),   Vec4(1.f, -1.f, -1.f, 1.f), Vec4(1.f, -1.f, 1.f, 1.f),
+        Vec4(1.f, 1.f, -1.f, 1.f),   Vec4(1.f, 1.f, 1.f, 1.f),
+    };
+    for (int i = 0; i < 8; ++i)
+    {
+        Vec4 world = invViewProj * corners[i];
+        if (fabsf(world.w) > 1e-6f) corners[i] = world / world.w;
+    }
 
-    // procedural dudv: two scrolling wave fields, calmed near the shore
-    float t = u_time;
-    vec2 d1 = vec2(sin(v_uv.y * 12.3 + t * 4.0), cos(v_uv.x * 11.7 + t * 3.4));
-    vec2 d2 = vec2(sin((v_uv.x + v_uv.y) * 9.1 - t * 2.7),
-                   cos((v_uv.y - v_uv.x) * 10.3 + t * 3.9));
-    vec2 distortion = (d1 + d2) * 0.25 * u_distortion * soft;
+    Vec3 center(0.f, 0.f, 0.f);
+    for (int i = 0; i < 8; ++i)
+        center += Vec3(corners[i].x, corners[i].y, corners[i].z);
+    center *= (1.0f / 8.0f);
 
-    vec2 reflUV = clamp(vec2(ndc.x, 1.0 - ndc.y) + distortion, 0.001, 0.999);
-    vec2 refrUV = clamp(ndc + distortion, 0.001, 0.999);
-    vec3 refl = texture(u_reflection, reflUV).rgb;
-    vec3 refr = texture(u_refraction, refrUV).rgb;
+    // tilted up vector avoids a singular basis when the sun is vertical
+    Vec3 eye = center - lightDir;
+    Mat4 lightView = Mat4::LookAt(eye, center, Vec3(0.001f, 1.f, 0.001f));
 
-    // fresnel: looking straight down favors refraction, grazing favors reflection
-    vec3 viewDir = normalize(u_cameraPos - v_world);
-    float fresnel = pow(clamp(dot(viewDir, vec3(0.0, 1.0, 0.0)), 0.0, 1.0), 0.7);
+    Vec3 minV(1e30f, 1e30f, 1e30f);
+    Vec3 maxV(-1e30f, -1e30f, -1e30f);
+    for (int i = 0; i < 8; ++i)
+    {
+        Vec3 t = lightView * Vec3(corners[i].x, corners[i].y, corners[i].z);
+        minV = minV.Min(t);
+        maxV = maxV.Max(t);
+    }
 
-    vec3 color = mix(refl, refr, fresnel);
-    // tint grows with depth: shallow water stays clear, deep water murks up
-    float murk = clamp(u_colorMix + waterDepth * 0.02, 0.0, 0.75);
-    color = mix(color, u_waterColor, murk);
+    const float depthScale = 5.0f;
+    minV.z *= (minV.z < 0.f) ? depthScale : (1.0f / depthScale);
+    maxV.z *= (maxV.z > 0.f) ? depthScale : (1.0f / depthScale);
 
-    // sun glint from the distorted surface normal, faded out at the shore
-    vec3 n = normalize(vec3(distortion.x * 8.0, 1.0, distortion.y * 8.0));
-    vec3 h = normalize(viewDir - u_lightDir);
-    color += vec3(0.5 * pow(max(dot(n, h), 0.0), 120.0) * soft);
+    float texelX = (maxV.x - minV.x) / shadowMapSize;
+    float texelY = (maxV.y - minV.y) / shadowMapSize;
+    if (texelX < 1e-6f) texelX = 1e-6f;
+    if (texelY < 1e-6f) texelY = 1e-6f;
+    minV.x = floorf(minV.x / texelX) * texelX;
+    minV.y = floorf(minV.y / texelY) * texelY;
+    maxV.x = floorf(maxV.x / texelX) * texelX;
+    maxV.y = floorf(maxV.y / texelY) * texelY;
 
-    // soft edge: the surface fades to nothing where it meets the terrain
-    OutColor = vec4(color, clamp(waterDepth / 0.9, 0.0, 1.0));
+    Mat4 lightProj = Mat4::Ortho(minV.x, maxV.x, minV.y, maxV.y, -maxV.z, -minV.z);
+    return lightProj * lightView;
 }
-)";
-
-// debug overlay: shows an extra view's texture in a corner rect
-static const char* kDebugFS = R"(
-in vec2 v_uv;
-out vec4 OutColor;
-uniform sampler2D u_tex;
-void main()
-{
-    // shown raw (no vertical flip): a reflection view reads upside down,
-    // which makes it obvious the overlay is the extra view, not the scene
-    OutColor = vec4(texture(u_tex, v_uv).rgb, 1.0);
-}
-)";
 
 // prepends the platform shader header to a version-less body
 static bool loadStage(gl::Shader& shader, gl::PipelineStage stage, const char* body)
@@ -167,12 +104,48 @@ bool SceneRenderer::init()
 
     m_locModel = m_forward.GetLocation("u_model");
     m_locViewProj = m_forward.GetLocation("u_viewProj");
+    m_locView = m_forward.GetLocation("u_view");
     m_locColor = m_forward.GetLocation("u_baseColor");
     m_locLightDir = m_forward.GetLocation("u_lightDir");
     m_locClipPlane = m_forward.GetLocation("u_clipPlane");
     m_locUnlit = m_forward.GetLocation("u_unlit");
+    m_locCameraPos = m_forward.GetLocation("u_cameraPos");
+    m_locSpecular = m_forward.GetLocation("u_specular");
+    // introspection reports arrays as "name[0]"; consecutive elements occupy
+    // consecutive locations
+    m_locCascadeMat0 = m_forward.GetLocation("u_lightViewProj[0]");
+    m_locSplits0 = m_forward.GetLocation("u_splits[0]");
+    m_locCascadeCount = m_forward.GetLocation("u_cascadeCount");
+    m_locShowCascades = m_forward.GetLocation("u_showCascades");
+    m_locShadowSize = m_forward.GetLocation("u_shadowMapSize");
+    m_locPointCount = m_forward.GetLocation("u_pointCount");
+    m_locPointPosRange0 = m_forward.GetLocation("u_pointPosRange[0]");
+    m_locPointColor0 = m_forward.GetLocation("u_pointColor[0]");
+    m_locSpotCount = m_forward.GetLocation("u_spotCount");
+    m_locSpotPosRange0 = m_forward.GetLocation("u_spotPosRange[0]");
+    m_locSpotDirInner0 = m_forward.GetLocation("u_spotDirInner[0]");
+    m_locSpotColorOuter0 = m_forward.GetLocation("u_spotColorOuter[0]");
+    m_locSpotShadowSlot0 = m_forward.GetLocation("u_spotShadowSlot[0]");
+    m_locSpotShadowMat0 = m_forward.GetLocation("u_spotShadowMat[0]");
     m_forward.Bind();
     m_forward.SetInt("u_diffuse", 0);
+    m_forward.SetInt("u_shadowMap", 1);
+    m_forward.SetInt("u_pointShadow0", 2);
+    m_forward.SetInt("u_pointShadow1", 3);
+    m_forward.SetInt("u_spotShadow0", 4);
+    m_forward.SetInt("u_spotShadow1", 5);
+    m_forward.SetInt(m_locCascadeCount, 0);
+    m_forward.SetInt(m_locPointCount, 0);
+    m_forward.SetInt(m_locSpotCount, 0);
+
+    if (!loadStage(m_pointDepth, gl::PipelineStage::VERTEX, kPointDepthVS) ||
+        !loadStage(m_pointDepth, gl::PipelineStage::FRAGMENT, kPointDepthFS) ||
+        !m_pointDepth.Link())
+        return false;
+    m_locPDModel = m_pointDepth.GetLocation("u_model");
+    m_locPDLightVP = m_pointDepth.GetLocation("u_lightVP");
+    m_locPDLightPos = m_pointDepth.GetLocation("u_lightPos");
+    m_locPDRange = m_pointDepth.GetLocation("u_range");
 
     m_locWModel = m_water.GetLocation("u_model");
     m_locWViewProj = m_water.GetLocation("u_viewProj");
@@ -210,8 +183,77 @@ void SceneRenderer::release()
     m_forward.Release();
     m_water.Release();
     m_debug.Release();
+    m_depth.Release();
+    m_pointDepth.Release();
+    m_shadowTex.Release();
+    m_shadowFbo.Release();
     m_white.Release();
+    m_cascades = 0;
     m_ready = false;
+}
+
+bool SceneRenderer::enable_shadows(int cascades, int resolution, float distance)
+{
+    if (!m_ready) return false;
+    if (cascades < 1) cascades = 1;
+    if (cascades > 4) cascades = 4;
+
+    if (!loadStage(m_depth, gl::PipelineStage::VERTEX, kDepthVS) ||
+        !loadStage(m_depth, gl::PipelineStage::FRAGMENT, kDepthFS) || !m_depth.Link())
+        return false;
+    m_locDepthMVP = m_depth.GetLocation("u_lightMVP");
+
+    m_shadowTex.LoadDepthArray(resolution, resolution, cascades);
+    m_shadowTex.SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+    m_shadowFbo.AttachTextureLayer(m_shadowTex, gl::Attachment::DEPTH, 0);
+    m_shadowFbo.SetDrawBuffers();
+    if (!m_shadowFbo.IsComplete()) return false;
+
+    m_cascades = cascades;
+    m_shadowSize = resolution;
+    m_shadow_distance = distance;
+    m_shadow_items.reserve(256);
+    return true;
+}
+
+void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
+{
+    float farClip = camera->get_far();
+    if (farClip > m_shadow_distance) farClip = m_shadow_distance;
+    csmSplits(camera->get_near(), farClip, m_splits, m_cascades);
+
+    Mat4 view = camera->get_view_matrix();
+    for (int c = 0; c < m_cascades; ++c)
+        m_cascadeMat[c] = csmCascadeMatrix(c, camera->get_aspect(), camera->get_fov(), view,
+                                           m_splits, m_lightDir, (float)m_shadowSize);
+
+    // every caster, no frustum: casters outside the view still throw
+    // shadows into it
+    m_shadow_items.clear();
+    scene.collect(m_shadow_items);
+
+    m_shadowFbo.Bind();
+    gl::Renderer::Viewport(0, 0, m_shadowSize, m_shadowSize);
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(true);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetPolygonOffset(true, 2.5f, 4.f);
+
+    m_depth.Bind();
+    for (int c = 0; c < m_cascades; ++c)
+    {
+        m_shadowFbo.AttachTextureLayer(m_shadowTex, gl::Attachment::DEPTH, c);
+        gl::Renderer::Clear(false, true);
+        for (const RenderItem& item : m_shadow_items)
+        {
+            Mat4 mvp = m_cascadeMat[c] * item.world;
+            m_depth.SetMat4(m_locDepthMVP, mvp.x);
+            item.vao->Bind();
+            gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
+                                      item.first_index);
+        }
+    }
+    gl::Renderer::SetPolygonOffset(false);
 }
 
 void SceneRenderer::set_clear_color(float r, float g, float b)
@@ -222,6 +264,137 @@ void SceneRenderer::set_clear_color(float r, float g, float b)
 void SceneRenderer::set_light_dir(const Vec3& dir)
 {
     m_lightDir = dir.normalized();
+}
+
+void SceneRenderer::collect_lights(Node* node, std::vector<LightNode*>& out)
+{
+    LightNode* l = node->as<LightNode>();
+    if (l) out.push_back(l);
+    for (Node* child : node->get_children())
+        collect_lights(child, out);
+}
+
+// Renders the shadow maps of shadow-casting local lights: six distance-cube
+// faces per point light, one projective map per spot. The first two
+// shadow-casting lights of each type get a slot; the rest light without
+// shadows.
+void SceneRenderer::draw_light_shadows(Scene& scene)
+{
+    m_shadow_items.clear();
+    scene.collect(m_shadow_items);
+
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(true);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+
+    int pointSlot = 0, spotSlot = 0;
+    for (LightNode* light : m_lights)
+    {
+        if (!light->cast_shadows) continue;
+        if (!light->ensure_gpu()) continue;
+        const Vec3 pos = light->get_global_position();
+
+        if (light->light_type == LightType::Point && pointSlot < 2)
+        {
+            light->shadow_fbo().Bind();
+            gl::Renderer::Viewport(0, 0, light->shadow_resolution, light->shadow_resolution);
+            Mat4 proj = Mat4::Perspective(90.0, 1.0, 0.05, (double)light->range);
+
+            static const Vec3 kFaceDir[6] = {Vec3(1, 0, 0),  Vec3(-1, 0, 0), Vec3(0, 1, 0),
+                                             Vec3(0, -1, 0), Vec3(0, 0, 1),  Vec3(0, 0, -1)};
+            static const Vec3 kFaceUp[6] = {Vec3(0, -1, 0), Vec3(0, -1, 0), Vec3(0, 0, 1),
+                                            Vec3(0, 0, -1), Vec3(0, -1, 0), Vec3(0, -1, 0)};
+
+            m_pointDepth.Bind();
+            m_pointDepth.SetVec3(m_locPDLightPos, pos.x, pos.y, pos.z);
+            m_pointDepth.SetFloat(m_locPDRange, light->range);
+            for (int face = 0; face < 6; ++face)
+            {
+                light->shadow_fbo().AttachCubeFace(light->shadow_tex(), gl::Attachment::DEPTH,
+                                                   (gl::u32)face);
+                gl::Renderer::Clear(false, true);
+                Mat4 vp = proj * Mat4::LookAt(pos, pos + kFaceDir[face], kFaceUp[face]);
+                m_pointDepth.SetMat4(m_locPDLightVP, vp.x);
+                for (const RenderItem& item : m_shadow_items)
+                {
+                    m_pointDepth.SetMat4(m_locPDModel, item.world.x);
+                    item.vao->Bind();
+                    gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
+                                              item.first_index);
+                }
+            }
+            ++pointSlot;
+        }
+        else if (light->light_type == LightType::Spot && spotSlot < 2)
+        {
+            light->shadow_fbo().Bind();
+            gl::Renderer::Viewport(0, 0, light->shadow_resolution, light->shadow_resolution);
+            gl::Renderer::Clear(false, true);
+            gl::Renderer::SetPolygonOffset(true, 2.f, 3.f);
+
+            const Vec3 dir = light->direction();
+            const float fovDeg = light->outer_angle * 2.f * 57.29578f;
+            Mat4 vp = Mat4::Perspective((double)fovDeg, 1.0, 0.05, (double)light->range) *
+                      Mat4::LookAt(pos, pos + dir, Vec3(0.001f, 1.f, 0.001f));
+            m_spotShadowMat[spotSlot] = vp;
+
+            m_depth.Bind();
+            for (const RenderItem& item : m_shadow_items)
+            {
+                Mat4 mvp = vp * item.world;
+                m_depth.SetMat4(m_locDepthMVP, mvp.x);
+                item.vao->Bind();
+                gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
+                                          item.first_index);
+            }
+            gl::Renderer::SetPolygonOffset(false);
+            ++spotSlot;
+        }
+    }
+}
+
+// Feeds the collected lights to the forward shader; called once per view.
+void SceneRenderer::set_light_uniforms()
+{
+    int points = 0, spots = 0, pointSlot = 0, spotSlot = 0;
+    for (LightNode* light : m_lights)
+    {
+        const Vec3 pos = light->get_global_position();
+        const Vec3 c = light->color * light->intensity;
+
+        if (light->light_type == LightType::Point && points < 4)
+        {
+            float slot = -1.f;
+            if (light->cast_shadows && pointSlot < 2)
+            {
+                light->shadow_tex().Bind(2 + (gl::u32)pointSlot);
+                slot = (float)pointSlot++;
+            }
+            m_forward.SetVec4(m_locPointPosRange0 + points, pos.x, pos.y, pos.z, light->range);
+            m_forward.SetVec4(m_locPointColor0 + points, c.x, c.y, c.z, slot);
+            ++points;
+        }
+        else if (light->light_type == LightType::Spot && spots < 4)
+        {
+            float slot = -1.f;
+            if (light->cast_shadows && spotSlot < 2)
+            {
+                light->shadow_tex().Bind(4 + (gl::u32)spotSlot);
+                m_forward.SetMat4(m_locSpotShadowMat0 + spotSlot, m_spotShadowMat[spotSlot].x);
+                slot = (float)spotSlot++;
+            }
+            const Vec3 dir = light->direction();
+            m_forward.SetVec4(m_locSpotPosRange0 + spots, pos.x, pos.y, pos.z, light->range);
+            m_forward.SetVec4(m_locSpotDirInner0 + spots, dir.x, dir.y, dir.z,
+                              cosf(light->inner_angle));
+            m_forward.SetVec4(m_locSpotColorOuter0 + spots, c.x, c.y, c.z,
+                              cosf(light->outer_angle));
+            m_forward.SetFloat(m_locSpotShadowSlot0 + spots, slot);
+            ++spots;
+        }
+    }
+    m_forward.SetInt(m_locPointCount, points);
+    m_forward.SetInt(m_locSpotCount, spots);
 }
 
 void SceneRenderer::collect_water(Node* node, std::vector<WaterNode*>& out)
@@ -258,9 +431,26 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     m_forward.Bind();
     Mat4 vp = v.proj * v.view;
     m_forward.SetMat4(m_locViewProj, vp.x);
+    m_forward.SetMat4(m_locView, v.view.x);
     m_forward.SetVec3(m_locLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
+    m_forward.SetVec3(m_locCameraPos, v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
     m_forward.SetVec4(m_locClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
                       v.clip_plane.w);
+
+    set_light_uniforms();
+
+    m_forward.SetInt(m_locCascadeCount, m_cascades);
+    if (m_cascades > 0)
+    {
+        m_shadowTex.Bind(1);
+        m_forward.SetInt(m_locShowCascades, m_show_cascades ? 1 : 0);
+        m_forward.SetVec2(m_locShadowSize, (float)m_shadowSize, (float)m_shadowSize);
+        for (int i = 0; i < m_cascades; ++i)
+        {
+            m_forward.SetMat4(m_locCascadeMat0 + i, m_cascadeMat[i].x);
+            m_forward.SetFloat(m_locSplits0 + i, m_splits[i + 1]);
+        }
+    }
 
     for (const RenderItem& item : m_items)
     {
@@ -270,6 +460,7 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
         diffuse->Bind(0);
         gl::Renderer::SetCull((mat && mat->double_sided) ? gl::CullMode::NONE : gl::CullMode::BACK);
         m_forward.SetFloat(m_locUnlit, (mat && mat->unlit) ? 1.f : 0.f);
+        m_forward.SetVec2(m_locSpecular, mat ? mat->specular : 0.f, mat ? mat->shininess : 32.f);
         m_forward.SetVec3(m_locColor, color.x, color.y, color.z);
         m_forward.SetMat4(m_locModel, item.world.x);
         item.vao->Bind();
@@ -320,6 +511,14 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     Mat4 view = camera->get_view_matrix();
     Vec3 cameraPos = camera->get_global_position();
 
+    // ── shadow views: one depth-only view per cascade ──
+    if (m_cascades > 0) draw_shadow_views(scene, camera);
+
+    // ── local lights: point cubemaps + spot maps ──
+    m_lights.clear();
+    collect_lights(&scene.root(), m_lights);
+    if (!m_lights.empty()) draw_light_shadows(scene);
+
     m_waters.clear();
     collect_water(&scene.root(), m_waters);
 
@@ -351,6 +550,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
         // color) texels, or the water edge picks up the sky color
         refl.clip_plane = Vec4(0.f, 1.f, 0.f, -h + 0.6f);
         refl.use_clip = true;
+        refl.cam_pos = Vec3(cameraPos.x, 2.f * h - cameraPos.y, cameraPos.z);
         draw_view(scene, refl);
 
         RenderView refr;
@@ -363,6 +563,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
         // continues into the refraction texture instead of clipping to sky
         refr.clip_plane = Vec4(0.f, -1.f, 0.f, h + 0.5f);
         refr.use_clip = true;
+        refr.cam_pos = cameraPos;
         draw_view(scene, refr);
     }
 
@@ -372,6 +573,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     main_view.proj = proj;
     main_view.w = viewport_w;
     main_view.h = viewport_h;
+    main_view.cam_pos = cameraPos;
     draw_view(scene, main_view);
 
     // water surfaces draw last, depth-tested against the scene

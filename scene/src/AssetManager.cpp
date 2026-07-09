@@ -18,10 +18,7 @@ struct AssetManager::Impl
     std::unordered_map<std::string, gl::Shader*> shaders;
 };
 
-AssetManager::AssetManager()
-    : m_impl(new Impl)
-{
-}
+AssetManager::AssetManager() : m_impl(new Impl) {}
 
 AssetManager::~AssetManager()
 {
@@ -73,27 +70,32 @@ gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool 
     if (!name || !path) return nullptr;
 
     auto it = m_impl->textures.find(name);
-    if (it != m_impl->textures.end())
-        return it->second;
+    if (it != m_impl->textures.end()) return it->second;
 
     scene::ByteArray data;
-    if (!fs::getFilesystem().readFile(path, data))
-        return nullptr;
+    if (!fs::getFilesystem().readFile(path, data)) return nullptr;
 
     int w = 0, h = 0, channels = 0;
-    stbi_uc* pixels = stbi_load_from_memory(
-        data.data(), (int)data.size(), &w, &h, &channels, 4);
+    stbi_uc* pixels = stbi_load_from_memory(data.data(), (int)data.size(), &w, &h, &channels, 4);
 
     data.destroy();
 
-    if (!pixels)
-        return nullptr;
+    if (!pixels) return nullptr;
 
     gl::Texture* tex = new gl::Texture();
-    tex->Load2D(pixels, w, h,
-                sRGB ? gl::TextureFormat::SRGB8_ALPHA8 : gl::TextureFormat::RGBA8);
+    tex->Load2D(pixels, w, h, sRGB ? gl::TextureFormat::SRGB8_ALPHA8 : gl::TextureFormat::RGBA8);
     stbi_image_free(pixels);
 
+    m_impl->textures[name] = tex;
+    return tex;
+}
+
+gl::Texture* AssetManager::createTexture(const char* name)
+{
+    if (!name) return nullptr;
+    auto it = m_impl->textures.find(name);
+    if (it != m_impl->textures.end()) return it->second;
+    gl::Texture* tex = new gl::Texture();
     m_impl->textures[name] = tex;
     return tex;
 }
@@ -125,8 +127,7 @@ gl::Shader* AssetManager::loadShader(const char* name, const char* vertPath, con
     if (!name || !vertPath || !fragPath) return nullptr;
 
     auto it = m_impl->shaders.find(name);
-    if (it != m_impl->shaders.end())
-        return it->second;
+    if (it != m_impl->shaders.end()) return it->second;
 
     scene::ByteArray vs, fs;
     if (!fs::getFilesystem().readText(vertPath, vs)) return nullptr;
@@ -154,18 +155,17 @@ gl::Shader* AssetManager::loadShader(const char* name, const char* vertPath, con
     return shader;
 }
 
-gl::Shader* AssetManager::loadShaderFromString(const char* name, const char* vertSource, const char* fragSource)
+gl::Shader* AssetManager::loadShaderFromString(const char* name, const char* vertSource,
+                                               const char* fragSource)
 {
     if (!name || !vertSource || !fragSource) return nullptr;
 
     auto it = m_impl->shaders.find(name);
-    if (it != m_impl->shaders.end())
-        return it->second;
+    if (it != m_impl->shaders.end()) return it->second;
 
     gl::Shader* shader = new gl::Shader();
     bool ok = shader->LoadFromString(gl::PipelineStage::VERTEX, vertSource) &&
-              shader->LoadFromString(gl::PipelineStage::FRAGMENT, fragSource) &&
-              shader->Link();
+              shader->LoadFromString(gl::PipelineStage::FRAGMENT, fragSource) && shader->Link();
 
     if (!ok)
     {

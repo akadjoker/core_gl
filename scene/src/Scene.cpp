@@ -1,5 +1,6 @@
 #include "scene/Scene.hpp"
 #include "scene/Camera3D.hpp"
+#include "scene/Material.hpp"
 #include "scene/Mesh.hpp"
 #include "scene/MeshInstance.hpp"
 
@@ -8,6 +9,35 @@ Scene::Scene() : m_root(new Node("root")) {}
 Scene::~Scene()
 {
     delete m_root;
+    for (Mesh* m : m_meshes)
+        delete m;
+    for (Material* m : m_materials)
+        delete m;
+}
+
+Mesh* Scene::create_mesh()
+{
+    m_meshes.push_back(new Mesh());
+    return m_meshes.back();
+}
+
+Material* Scene::create_material()
+{
+    m_materials.push_back(new Material());
+    return m_materials.back();
+}
+
+Material* Scene::create_material(float r, float g, float b)
+{
+    m_materials.push_back(new Material(Vec3(r, g, b)));
+    return m_materials.back();
+}
+
+void Scene::release_gpu()
+{
+    m_root->propagate_release_gpu();
+    for (Mesh* m : m_meshes)
+        m->release_gpu();
 }
 
 void Scene::ready()

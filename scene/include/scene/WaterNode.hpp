@@ -57,6 +57,7 @@ public:
 
 protected:
     void _update(float dt) override { m_time += dt; }
+    void _release_gpu() override { release_gpu(); } // Scene::release_gpu reaches here
 
 private:
     float m_half = 50.f;
