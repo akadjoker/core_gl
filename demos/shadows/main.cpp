@@ -90,15 +90,13 @@ int main(int argc, char** argv)
 
     // local lights: an orbiting warm point light and a fixed spot, both with
     // their own shadow maps — just nodes, the renderer does the rest
-    LightNode* orb = scene.root().create_child<LightNode>("orb");
-    orb->light_type = LightType::Point;
+    PointLight* orb = scene.root().create_child<PointLight>("orb");
     orb->color = Vec3(1.f, 0.55f, 0.25f);
     orb->intensity = 35.f;
     orb->range = 30.f;
     orb->cast_shadows = true;
 
-    LightNode* spot = scene.root().create_child<LightNode>("spot");
-    spot->light_type = LightType::Spot;
+    SpotLight* spot = scene.root().create_child<SpotLight>("spot");
     spot->color = Vec3(0.4f, 0.7f, 1.f);
     spot->intensity = 150.f;
     spot->range = 80.f;

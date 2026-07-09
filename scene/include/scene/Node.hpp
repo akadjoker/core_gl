@@ -15,6 +15,8 @@ enum NodeType : unsigned short
     NT_SKINNEDMESH,
     NT_BONEATTACHMENT,
     NT_LIGHT,
+    NT_POINTLIGHT,
+    NT_SPOTLIGHT,
     NT_BEHAVIOR,
     NT_PARTICLESYSTEM,
     NT_WATER,

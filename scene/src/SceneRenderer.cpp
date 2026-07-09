@@ -293,12 +293,14 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
         if (!light->cast_shadows) continue;
         if (!light->ensure_gpu()) continue;
         const Vec3 pos = light->get_global_position();
+        PointLight* point = light->as<PointLight>();
+        SpotLight* spot = light->as<SpotLight>();
 
-        if (light->light_type == LightType::Point && pointSlot < 2)
+        if (point && pointSlot < 2)
         {
             light->shadow_fbo().Bind();
             gl::Renderer::Viewport(0, 0, light->shadow_resolution, light->shadow_resolution);
-            Mat4 proj = Mat4::Perspective(90.0, 1.0, 0.05, (double)light->range);
+            Mat4 proj = Mat4::Perspective(90.0, 1.0, 0.05, (double)point->range);
 
             static const Vec3 kFaceDir[6] = {Vec3(1, 0, 0),  Vec3(-1, 0, 0), Vec3(0, 1, 0),
                                              Vec3(0, -1, 0), Vec3(0, 0, 1),  Vec3(0, 0, -1)};
@@ -307,7 +309,7 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
 
             m_pointDepth.Bind();
             m_pointDepth.SetVec3(m_locPDLightPos, pos.x, pos.y, pos.z);
-            m_pointDepth.SetFloat(m_locPDRange, light->range);
+            m_pointDepth.SetFloat(m_locPDRange, point->range);
             for (int face = 0; face < 6; ++face)
             {
                 light->shadow_fbo().AttachCubeFace(light->shadow_tex(), gl::Attachment::DEPTH,
@@ -325,16 +327,16 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
             }
             ++pointSlot;
         }
-        else if (light->light_type == LightType::Spot && spotSlot < 2)
+        else if (spot && spotSlot < 2)
         {
             light->shadow_fbo().Bind();
             gl::Renderer::Viewport(0, 0, light->shadow_resolution, light->shadow_resolution);
             gl::Renderer::Clear(false, true);
             gl::Renderer::SetPolygonOffset(true, 2.f, 3.f);
 
-            const Vec3 dir = light->direction();
-            const float fovDeg = light->outer_angle * 2.f * 57.29578f;
-            Mat4 vp = Mat4::Perspective((double)fovDeg, 1.0, 0.05, (double)light->range) *
+            const Vec3 dir = spot->direction();
+            const float fovDeg = spot->outer_angle * 2.f * 57.29578f;
+            Mat4 vp = Mat4::Perspective((double)fovDeg, 1.0, 0.05, (double)spot->range) *
                       Mat4::LookAt(pos, pos + dir, Vec3(0.001f, 1.f, 0.001f));
             m_spotShadowMat[spotSlot] = vp;
 
@@ -361,34 +363,35 @@ void SceneRenderer::set_light_uniforms()
     {
         const Vec3 pos = light->get_global_position();
         const Vec3 c = light->color * light->intensity;
+        PointLight* point = light->as<PointLight>();
+        SpotLight* spot = light->as<SpotLight>();
 
-        if (light->light_type == LightType::Point && points < 4)
+        if (point && points < 4)
         {
             float slot = -1.f;
-            if (light->cast_shadows && pointSlot < 2)
+            if (point->cast_shadows && pointSlot < 2)
             {
-                light->shadow_tex().Bind(2 + (gl::u32)pointSlot);
+                point->shadow_tex().Bind(2 + (gl::u32)pointSlot);
                 slot = (float)pointSlot++;
             }
-            m_forward.SetVec4(m_locPointPosRange0 + points, pos.x, pos.y, pos.z, light->range);
+            m_forward.SetVec4(m_locPointPosRange0 + points, pos.x, pos.y, pos.z, point->range);
             m_forward.SetVec4(m_locPointColor0 + points, c.x, c.y, c.z, slot);
             ++points;
         }
-        else if (light->light_type == LightType::Spot && spots < 4)
+        else if (spot && spots < 4)
         {
             float slot = -1.f;
-            if (light->cast_shadows && spotSlot < 2)
+            if (spot->cast_shadows && spotSlot < 2)
             {
-                light->shadow_tex().Bind(4 + (gl::u32)spotSlot);
+                spot->shadow_tex().Bind(4 + (gl::u32)spotSlot);
                 m_forward.SetMat4(m_locSpotShadowMat0 + spotSlot, m_spotShadowMat[spotSlot].x);
                 slot = (float)spotSlot++;
             }
-            const Vec3 dir = light->direction();
-            m_forward.SetVec4(m_locSpotPosRange0 + spots, pos.x, pos.y, pos.z, light->range);
+            const Vec3 dir = spot->direction();
+            m_forward.SetVec4(m_locSpotPosRange0 + spots, pos.x, pos.y, pos.z, spot->range);
             m_forward.SetVec4(m_locSpotDirInner0 + spots, dir.x, dir.y, dir.z,
-                              cosf(light->inner_angle));
-            m_forward.SetVec4(m_locSpotColorOuter0 + spots, c.x, c.y, c.z,
-                              cosf(light->outer_angle));
+                              cosf(spot->inner_angle));
+            m_forward.SetVec4(m_locSpotColorOuter0 + spots, c.x, c.y, c.z, cosf(spot->outer_angle));
             m_forward.SetFloat(m_locSpotShadowSlot0 + spots, slot);
             ++spots;
         }
