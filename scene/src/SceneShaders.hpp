@@ -406,6 +406,102 @@ void main()
 }
 )";
 
+// ── tonemap: HDR buffer -> screen. Filmic curve normalized at a white
+// point of 11.2; highlights roll off smoothly instead of clipping. No
+// gamma term: the lighting above is authored in display space. ──
+static const char* kTonemapFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_hdr;
+uniform float u_exposure;
+
+vec3 filmic(vec3 x)
+{
+    const float A = 0.22, B = 0.30, C = 0.10, D = 0.20, E = 0.01, F = 0.30;
+    return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+}
+
+void main()
+{
+    vec3 hdr = texture(u_hdr, v_uv).rgb * u_exposure;
+    vec3 mapped = max(filmic(hdr), vec3(0.0)) / max(filmic(vec3(11.2)), vec3(1e-4));
+    OutColor = vec4(mapped, 1.0);
+}
+)";
+
+// ── volumetric god rays: march from the camera toward each pixel, sampling
+// the LAST shadow cascade at every step — steps the sun can reach add
+// in-scattered light, weighted by a Henyey-Greenstein phase function (bright
+// halo toward the sun). Runs on the HDR buffer before tonemapping. ──
+static const char* kGodrayFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_hdr;
+uniform sampler2D u_depth;
+uniform sampler2DArray u_shadowMap;
+uniform mat4 u_lightMat;   // last cascade's light matrix
+uniform float u_lastLayer; // last cascade index
+uniform mat4 u_invViewProj;
+uniform vec3 u_cameraPos;
+uniform vec3 u_lightDir; // direction the light travels
+uniform vec3 u_lightColor;
+uniform vec4 u_params; // x maxSteps, y sampleStep, z stepIncrement, w maxDistance
+uniform float u_asymmetry;
+
+float rayShadow(vec3 pos)
+{
+    vec4 lp = u_lightMat * vec4(pos, 1.0);
+    vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
+    if (p.x < 0.001 || p.x > 0.999 || p.y < 0.001 || p.y > 0.999) return 0.0;
+    float d = texture(u_shadowMap, vec3(p.xy, u_lastLayer)).r;
+    return (p.z - 0.002) > d ? 0.0 : 1.0;
+}
+
+float phaseHG(float cosTheta)
+{
+    float g = u_asymmetry;
+    float denom = 1.0 + g * g + 2.0 * g * cosTheta;
+    return (1.0 / 12.5663706) * (1.0 - g * g) / (denom * sqrt(denom));
+}
+
+float noise12(vec2 p)
+{
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main()
+{
+    vec3 color = texture(u_hdr, v_uv).rgb;
+    float depth = texture(u_depth, v_uv).r;
+    vec4 world = u_invViewProj * vec4(v_uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    world.xyz /= world.w;
+    vec3 camToFrag = world.xyz - u_cameraPos;
+    float fragDist = length(camToFrag);
+    vec3 dir = camToFrag / fragDist;
+
+    // per-pixel jitter hides the stepping at low sample counts
+    float jitter = noise12(v_uv) * 0.6;
+    float illum = 0.0;
+    float steps = 0.0;
+    float stp = u_params.y;
+    float traveled = 0.0;
+    for (float i = 0.0; i < u_params.x; i += 1.0)
+    {
+        traveled = stp * (i + jitter);
+        if (fragDist <= traveled) break;
+        stp *= u_params.z;
+        illum += rayShadow(u_cameraPos + dir * traveled);
+        steps += 1.0;
+    }
+    if (steps > 0.0) illum /= steps;
+    illum *= clamp(traveled / u_params.w, 0.0, 1.0);
+    illum = clamp(illum, 0.0, 0.7);
+
+    float scattering = max(phaseHG(dot(dir, u_lightDir)), 0.0001);
+    OutColor = vec4(mix(color, u_lightColor * scattering, illum), 1.0);
+}
+)";
+
 // debug overlay: shows an extra view's texture in a corner rect
 static const char* kDebugFS = R"(
 in vec2 v_uv;
