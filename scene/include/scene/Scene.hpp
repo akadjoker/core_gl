@@ -9,15 +9,8 @@ namespace gl
 class VertexArray;
 }
 class Material;
-
-// One drawable unit, flattened out of the node tree. Deliberately at the
-// DRAW-COMMAND level (geometry range + material + world), not the resource
-// level: a pass never needs to know whether the geometry came from a static
-// Mesh surface, a terrain chunk with its own VAO, or a skinned mesh — they
-// all collapse to the same item. Skinned geometry additionally carries its
-// bone palette; a pass that sees skin_palette != null binds the skinned
-// shader variant and uploads the matrices. The world matrix is copied at
-// collect time so passes run against a stable list.
+class Camera3D;
+ 
 struct RenderItem
 {
     gl::VertexArray* vao = nullptr;
@@ -29,13 +22,7 @@ struct RenderItem
     u32 skin_count = 0;
 };
 
-// Owns the node tree and turns it into flat render lists. The tree is the
-// AUTHORING structure (logic, hierarchy, transforms); rendering never walks
-// it directly — every frame collect() gathers visible MeshInstances into a
-// RenderItem list that passes (forward, shadow cascades, reflections...)
-// consume. Each view culls with its own frustum: the camera pass with the
-// camera's, each shadow cascade with the light's — same tree, different
-// frustum, different list.
+ 
 class Scene
 {
 public:
@@ -50,6 +37,17 @@ public:
     void ready();
     void update(float dt);
 
+    // ── cameras ──
+    // Cameras are ordinary nodes in the tree; the scene tracks which one is
+    // the ACTIVE one (the main view). Other cameras stay available for extra
+    // views — minimap, mirrors, split-screen — each rendered by its own pass
+    // over the same collected items.
+    void set_active_camera(Camera3D* cam) { m_active_camera = cam; }
+    // null when none was set or the node has since left the tree
+    Camera3D* get_active_camera();
+    Camera3D* find_camera(const std::string& name);    // tree search by name
+    void collect_cameras(std::vector<Camera3D*>& out); // every camera in the tree
+
     // Appends one RenderItem per visible surface. With a frustum, each
     // surface's bounds are transformed to world space and tested — surfaces
     // outside the view are skipped (per-surface culling: one huge mesh with
@@ -58,6 +56,8 @@ public:
 
 private:
     void collect_node(Node* node, std::vector<RenderItem>& out, const Frustum* frustum);
+    void collect_cameras_node(Node* node, std::vector<Camera3D*>& out);
 
     Node* m_root;
+    Camera3D* m_active_camera = nullptr;
 };

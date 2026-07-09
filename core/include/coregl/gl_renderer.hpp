@@ -72,6 +72,27 @@ public:
     // Polygon offset (shadow map bias)
     static void SetPolygonOffset(bool enable, f32 factor = 0.f, f32 units = 0.f);
 
+    // User clip plane toggle (index 0..7). The plane equation itself is a
+    // shader uniform: the vertex stage writes gl_ClipDistance[index] and
+    // fragments with a negative value are clipped. Used by planar
+    // reflections/refractions (water, mirrors) to cut geometry at a plane.
+    // Desktop GL only guarantee is 8 planes; on ES builds this is a no-op —
+    // there the plane is applied in-shader (see ShaderHeader's CLIP_APPLY).
+    static void SetClipDistance(u32 index, bool enable);
+
+    // Portable shader prologue: the right GLSL version line, precision
+    // qualifiers (mandatory on ES, absent on desktop) and the clip-plane
+    // macros. Prepend it to shader bodies that must compile on desktop GL
+    // and ES/WebGL2 alike, then write the body against these macros:
+    //   CLIP_VARYING       — declare at global scope in both stages
+    //   CLIP_SETUP(d)      — vertex stage: d = signed distance to the plane
+    //                        (desktop: gl_ClipDistance; ES: a varying)
+    //   CLIP_APPLY         — fragment stage, first line of main()
+    //                        (desktop: empty; ES: discard when clipped)
+    // A disabled plane must be (0,0,0,1) — "keep everything" — so the ES
+    // path needs no separate enable flag.
+    static const char* ShaderHeader(PipelineStage stage);
+
     // Color mask
     static void SetColorWrite(bool r, bool g, bool b, bool a);
 

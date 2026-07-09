@@ -1,4 +1,5 @@
 #include "scene/Scene.hpp"
+#include "scene/Camera3D.hpp"
 #include "scene/Mesh.hpp"
 #include "scene/MeshInstance.hpp"
 
@@ -17,6 +18,33 @@ void Scene::ready()
 void Scene::update(float dt)
 {
     m_root->propagate_update(dt);
+}
+
+Camera3D* Scene::get_active_camera()
+{
+    // the pointer may outlive the node's membership of this tree (removed or
+    // reparented elsewhere) — treat a camera outside the tree as "none"
+    if (m_active_camera && !m_root->is_ancestor_of(m_active_camera)) m_active_camera = nullptr;
+    return m_active_camera;
+}
+
+Camera3D* Scene::find_camera(const std::string& name)
+{
+    Node* n = m_root->find_child(name, true);
+    return n ? n->as<Camera3D>() : nullptr;
+}
+
+void Scene::collect_cameras(std::vector<Camera3D*>& out)
+{
+    collect_cameras_node(m_root, out);
+}
+
+void Scene::collect_cameras_node(Node* node, std::vector<Camera3D*>& out)
+{
+    Camera3D* cam = node->as<Camera3D>();
+    if (cam) out.push_back(cam);
+    for (Node* child : node->get_children())
+        collect_cameras_node(child, out);
 }
 
 void Scene::collect(std::vector<RenderItem>& out, const Frustum* frustum)

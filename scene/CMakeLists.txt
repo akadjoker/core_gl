@@ -6,6 +6,8 @@ add_library(scene STATIC
     src/Mesh.cpp
     src/Camera3D.cpp
     src/Scene.cpp
+    src/SceneRenderer.cpp
+    src/WaterNode.cpp
     src/ByteArray.cpp
     src/IO.cpp
     src/Filesystem.cpp

@@ -84,6 +84,8 @@ struct State
     f32 polygonOffsetFactor = 0.f;
     f32 polygonOffsetUnits = 0.f;
 
+    bool clipDistance[8] = {};
+
     bool colorMask[4] = {true, true, true, true};
 
     bool scissor = false;
@@ -398,6 +400,45 @@ void Renderer::SetPolygonOffset(bool enable, f32 factor, f32 units)
         glPolygonOffset(factor, units);
         ++s.stats.stateChanges;
     }
+}
+
+void Renderer::SetClipDistance(u32 index, bool enable)
+{
+#if defined(CORE_GL_ES)
+    // no hardware clip planes on ES: clipping happens in-shader (CLIP_APPLY
+    // discards), driven by the plane uniform alone
+    (void)index;
+    (void)enable;
+#else
+    if (index >= 8 || enable == s.clipDistance[index]) return;
+    s.clipDistance[index] = enable;
+    setCap(GL_CLIP_DISTANCE0 + index, enable);
+#endif
+}
+
+const char* Renderer::ShaderHeader(PipelineStage stage)
+{
+#if defined(CORE_GL_ES)
+    if (stage == PipelineStage::VERTEX)
+        return "#version 300 es\n"
+               "precision highp float;\n"
+               "precision highp int;\n"
+               "#define CLIP_VARYING out float v_clipDistance;\n"
+               "#define CLIP_SETUP(d) v_clipDistance = (d)\n";
+    return "#version 300 es\n"
+           "precision highp float;\n"
+           "precision highp int;\n"
+           "#define CLIP_VARYING in float v_clipDistance;\n"
+           "#define CLIP_APPLY if (v_clipDistance < 0.0) discard\n";
+#else
+    if (stage == PipelineStage::VERTEX)
+        return "#version 430 core\n"
+               "#define CLIP_VARYING\n"
+               "#define CLIP_SETUP(d) gl_ClipDistance[0] = (d)\n";
+    return "#version 430 core\n"
+           "#define CLIP_VARYING\n"
+           "#define CLIP_APPLY\n";
+#endif
 }
 
 void Renderer::SetColorWrite(bool r, bool g, bool b, bool a)

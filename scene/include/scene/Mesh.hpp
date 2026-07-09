@@ -45,8 +45,9 @@ public:
     void compute_bounds();
 
     // ── GPU ──
-    void upload();   // builds the GL buffers/VAO from the CPU data
-    void free_cpu(); // drops the CPU copy (GPU side stays)
+    void upload();      // builds the GL buffers/VAO from the CPU data
+    void free_cpu();    // drops the CPU copy (GPU side stays)
+    void release_gpu(); // frees the GL objects (call while the context lives)
     bool is_uploaded() const { return m_uploaded; }
 
     // ── read access for the renderer ──

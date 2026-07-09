@@ -145,6 +145,14 @@ void Mesh::upload()
     m_uploaded = true;
 }
 
+void Mesh::release_gpu()
+{
+    m_vao.Release();
+    m_vbo.Release();
+    m_ibo.Release();
+    m_uploaded = false;
+}
+
 void Mesh::free_cpu()
 {
     m_vertices.clear();

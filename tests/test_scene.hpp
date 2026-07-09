@@ -1,47 +1,19 @@
 #pragma once
 
-// First scene-driven render: a node tree (Camera3D + MeshInstances sharing
-// two Mesh resources) collected into flat RenderItems and drawn by a simple
-// forward pass. This closes the loop scene -> RenderQueue -> coregl and is
-// the seed of the pass architecture: shadow cascades, reflections and water
-// are later passes consuming the same collected list.
+// Scene-driven render, written like final user code: build a node tree,
+// call SceneRenderer::render(scene) — not a single direct gl:: draw call in
+// this file. Two cameras live in the tree (free-fly + fixed overhead);
+// TAB switches which one is active, proving multi-camera through the Scene.
 //
 // Controls: WASD move, Q/E down/up, hold left mouse to look, LSHIFT fast,
-//           F10 gif, ESC quit. A child node orbits its parent cube to show
-//           hierarchy transforms live.
+//           TAB switch camera, F10 gif, ESC quit.
 
 #include "test_common.hpp"
 #include <scene/Scene.hpp>
+#include <scene/SceneRenderer.hpp>
 #include <scene/Mesh.hpp>
 #include <scene/MeshInstance.hpp>
 #include <scene/Camera3D.hpp>
-
-static const char* kSceneFwdVS = R"(#version 430 core
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec4 a_tangent;
-layout(location = 3) in vec2 a_uv;
-uniform mat4 u_model;
-uniform mat4 u_viewProj;
-out vec3 v_normal;
-void main()
-{
-    v_normal = normalize(mat3(u_model) * a_normal);
-    gl_Position = u_viewProj * (u_model * vec4(a_position, 1.0));
-}
-)";
-
-static const char* kSceneFwdFS = R"(#version 430 core
-in vec3 v_normal;
-out vec4 OutColor;
-uniform vec3 u_baseColor;
-uniform vec3 u_lightDir;
-void main()
-{
-    float diffuse = max(dot(normalize(v_normal), -u_lightDir), 0.0);
-    OutColor = vec4(u_baseColor * (0.30 + 0.70 * diffuse), 1.0);
-}
-)";
 
 // builds a unit cube Mesh (y in [0,1], 24 verts with face normals)
 static void sceneMakeCube(Mesh& mesh)
@@ -118,20 +90,16 @@ inline int test_scene(int maxFrames)
 {
     TestApp app;
     if (!app.Create("coregl - scene graph render")) return 1;
-    printf("controls: WASD move | Q/E down/up | hold left mouse to look | LSHIFT fast\n");
+    printf("controls: WASD move | Q/E down/up | left mouse look | LSHIFT fast | TAB camera\n");
 
-    gl::Shader shader;
-    if (!shader.LoadFromString(gl::PipelineStage::VERTEX, kSceneFwdVS) ||
-        !shader.LoadFromString(gl::PipelineStage::FRAGMENT, kSceneFwdFS) || !shader.Link())
+    SceneRenderer renderer;
+    if (!renderer.init())
     {
-        fprintf(stderr, "shader error: %s\n", shader.GetLog());
+        fprintf(stderr, "renderer init failed\n");
         app.Destroy();
         return 1;
     }
-    const gl::i32 modelLoc = shader.GetLocation("u_model");
-    const gl::i32 vpLoc = shader.GetLocation("u_viewProj");
-    const gl::i32 colorLoc = shader.GetLocation("u_baseColor");
-    const gl::i32 lightLoc = shader.GetLocation("u_lightDir");
+    renderer.set_light_dir(Vec3(0.5f, -1.0f, 0.3f));
 
     // --- resources: TWO meshes shared by many instances ---
     Mesh cubeMesh, planeMesh;
@@ -161,22 +129,23 @@ inline int test_scene(int maxFrames)
         moon->set_scale(0.35f);
     }
 
-    Camera3D* camera = (Camera3D*)scene.root().add_child(new Camera3D("camera"));
+    Camera3D* camera = (Camera3D*)scene.root().add_child(new Camera3D("fly"));
     camera->set_perspective(55.f, 0.1f, 300.f);
     camera->set_position(0.f, 6.f, 22.f);
 
-    scene.ready();
+    Camera3D* overhead = (Camera3D*)scene.root().add_child(new Camera3D("overhead"));
+    overhead->set_perspective(55.f, 0.1f, 300.f);
+    overhead->set_position(0.f, 35.f, 0.1f);
+    overhead->look_at(Vec3(0.f, 0.f, 0.f));
 
-    const Vec3 lightDir = Vec3(0.5f, -1.0f, 0.3f).normalized();
+    scene.set_active_camera(camera);
+    scene.ready();
 
     // free-fly state drives the camera NODE (not a raw matrix); RADIANS
     float camYaw = 0.f, camPitch = -0.25f;
     bool looking = false;
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
-
-    std::vector<RenderItem> items;
-    items.reserve(64);
 
     int frame = 0;
     bool running = true;
@@ -189,6 +158,10 @@ inline int test_scene(int maxFrames)
             if (ev.type == SDL_KEYDOWN)
             {
                 if (ev.key.keysym.sym == SDLK_ESCAPE) running = false;
+                if (ev.key.keysym.sym == SDLK_TAB)
+                    scene.set_active_camera(scene.get_active_camera() == camera
+                                                ? scene.find_camera("overhead")
+                                                : camera);
                 if (ev.key.keysym.sym == SDLK_F10)
                 {
                     int gw, gh;
@@ -228,50 +201,20 @@ inline int test_scene(int maxFrames)
 
         scene.update(dt); // orbiters move here
 
-        // --- collect: tree -> flat list, culled by the camera frustum ---
-        Frustum frustum;
-        frustum.build(camera->get_view_matrix(), camera->get_projection_matrix());
-        items.clear();
-        scene.collect(items, &frustum);
-
-        // --- forward pass over the collected items ---
+        // --- the entire draw is ONE call; no gl:: anywhere in user code ---
         app.BeginFrame();
         int w, h;
         SDL_GL_GetDrawableSize(app.window, &w, &h);
-        camera->set_viewport_size(w, h);
-
-        gl::Renderer::SetDepthTest(true);
-        gl::Renderer::SetCull(gl::CullMode::BACK);
-        gl::Renderer::ClearColor(0.5f, 0.65f, 0.8f, 1.0f);
-        gl::Renderer::Clear(true, true);
-
-        shader.Bind();
-        Mat4 vp = camera->get_view_projection();
-        shader.SetMat4(vpLoc, vp.x);
-        shader.SetVec3(lightLoc, lightDir.x, lightDir.y, lightDir.z);
-
-        for (const RenderItem& item : items)
-        {
-            // no Material yet: color derives from the geometry (plane vs cubes)
-            if (item.vao == &planeMesh.vao())
-                shader.SetVec3(colorLoc, 0.72f, 0.72f, 0.72f);
-            else
-                shader.SetVec3(colorLoc, 0.85f, 0.45f, 0.3f);
-
-            shader.SetMat4(modelLoc, item.world.x);
-            item.vao->Bind();
-            gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
-                                      item.first_index);
-        }
+        renderer.render(scene, w, h);
 
         app.EndFrame();
         ++frame;
         if (maxFrames > 0 && frame >= maxFrames) break;
     }
 
-    printf("frames: %d | items/frame: %d\n", frame, (int)items.size());
+    printf("frames: %d | items/frame: %d\n", frame, renderer.last_item_count());
 
-    shader.Release();
+    renderer.release();
     app.Destroy();
     return 0;
 }

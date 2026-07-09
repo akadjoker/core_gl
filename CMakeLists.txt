@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 option(COREGL_BUILD_TESTS "Build coregl tests" ON)
+option(COREGL_BUILD_DEMOS "Build coregl demos" ON)
 
 add_subdirectory(core)
 add_subdirectory(scene)
@@ -17,4 +18,8 @@ add_subdirectory(scene)
 if(COREGL_BUILD_TESTS)
     add_subdirectory(tests)
     add_subdirectory(scene_tests)
+endif()
+
+if(COREGL_BUILD_DEMOS)
+    add_subdirectory(demos)
 endif()

@@ -26,3 +26,9 @@
 #endif
 #include <GL/glcorearb.h>
 #endif
+
+// ES headers only expose clip distances through EXT_clip_cull_distance; the
+// enum values are shared with desktop GL, so define them when missing.
+#ifndef GL_CLIP_DISTANCE0
+#define GL_CLIP_DISTANCE0 0x3000
+#endif

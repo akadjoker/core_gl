@@ -18,6 +18,7 @@ enum NodeType : unsigned short
     NT_LIGHT,
     NT_BEHAVIOR,
     NT_PARTICLESYSTEM,
+    NT_WATER,
     NT_COUNT
 };
 
@@ -67,7 +68,7 @@ public:
     virtual void on_parent_transform_changed();
 
 protected:
-    // Hooks de subclasse (mapeiam 1:1 para o binding ZenPy).
+
     virtual void _ready() {}
     virtual void _update(float dt) { (void)dt; }
 
