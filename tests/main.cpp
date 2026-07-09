@@ -26,6 +26,7 @@
 #include "test_shadowmap.hpp"
 #include "test_csm.hpp"
 #include "test_scene.hpp"
+#include "test_base_components.hpp"
 #include "tutorial_01_triangle.hpp"
 #include "tutorial_02_texture.hpp"
 #include "tutorial_03_cube.hpp"
@@ -70,6 +71,7 @@ static const NamedTest kTests[] = {
     {"shadowmap", test_shadowmap, "plane + cube with a real-time orbiting-light shadow map"},
     {"scene", test_scene, "node-tree scene rendered through collected RenderItems"},
     {"csm", test_csm, "cascaded shadow maps (first step)"},
+    {"base", test_base_components, "ByteArray + Filesystem + AssetManager validation"},
 
 };
 static const int kTestCount = (int)(sizeof(kTests) / sizeof(kTests[0]));

@@ -6,6 +6,8 @@
 #include <scene/Node3D.hpp>
 #include <scene/Camera3D.hpp>
 #include <scene/MeshInstance.hpp>
+#include <scene/Pixmap.hpp>
+#include <scene/Color.hpp>
 #include <cstdio>
 #include <cmath>
 
@@ -22,7 +24,170 @@ static bool near3(const Vec3& a, float x, float y, float z, float eps = 1e-4f)
     return fabsf(a.x - x) < eps && fabsf(a.y - y) < eps && fabsf(a.z - z) < eps;
 }
 
-// _ready/_update hooks: record call order to verify propagation rules
+// ── Pixmap tests ─────────────────────────────────────────────────────────
+
+static void test_pixmap_basics()
+{
+    scene::Pixmap p;
+    check(!p.is_valid(), "Pixmap: default is_valid false");
+    check(p.get_size() == 0, "Pixmap: default get_size 0");
+    check(!p.has_alpha(), "Pixmap: default has_alpha false");
+
+    scene::Pixmap p2(32, 32, 4);
+    check(p2.is_valid(), "Pixmap: sized ctor is_valid");
+    check(p2.width == 32 && p2.height == 32, "Pixmap: sized dimensions");
+    check(p2.has_alpha(), "Pixmap: 4-comp has_alpha");
+
+    scene::Pixmap p3(16, 16, 3);
+    check(!p3.has_alpha(), "Pixmap: 3-comp has_alpha false");
+}
+
+static void test_pixmap_pixels()
+{
+    scene::Pixmap p(4, 4, 4);
+    p.fill(static_cast<gl::u8>(255), static_cast<gl::u8>(0),
+           static_cast<gl::u8>(0),   static_cast<gl::u8>(128));
+    scene::Color c = p.get_pixel_color(1, 1);
+    check(c.r() == 255 && c.g() == 0 && c.b() == 0 && c.a() == 128,
+          "Pixmap: fill RGBA + get_pixel_color");
+
+    p.set_pixel(2u, 2u, 0x80402010u);
+    check(p.get_pixel(2, 2) == 0x80402010u, "Pixmap: set_pixel/get_pixel u32");
+
+    p.clear();
+    scene::Color cz = p.get_pixel_color(2, 2);
+    check(cz.r() == 0 && cz.g() == 0 && cz.b() == 0 && cz.a() == 0,
+          "Pixmap: clear zeros pixels");
+}
+
+static void test_pixmap_flip()
+{
+    scene::Pixmap p(4, 3, 4);
+    p.fill(0, 0, 0, 0);
+    p.set_pixel(0u, 0u, static_cast<gl::u8>(255), static_cast<gl::u8>(0),
+                static_cast<gl::u8>(0), static_cast<gl::u8>(255));
+    p.flip_vertical();
+    check(p.get_pixel_color(0, 2).r() == 255, "Pixmap: flip_vertical");
+    p.flip_horizontal();
+    check(p.get_pixel_color(3, 2).r() == 255, "Pixmap: flip_horizontal");
+}
+
+static void test_pixmap_drawing()
+{
+    scene::Pixmap p(8, 8, 4);
+    p.clear();
+    p.draw_line(0, 0, 7, 7, scene::Color(255, 0, 0, 255));
+    check(p.get_pixel_color(4, 4).r() == 255, "Pixmap: draw_line");
+
+    p.clear();
+    p.draw_rect(2, 2, 3, 3, scene::Color(0, 255, 0, 255), true);
+    check(p.get_pixel_color(3, 3).g() == 255, "Pixmap: draw_rect filled");
+
+    p.clear();
+    p.draw_rect(2, 2, 3, 3, scene::Color(0, 0, 255, 255), false);
+    check(p.get_pixel_color(2, 2).b() == 255, "Pixmap: draw_rect outline");
+
+    p.clear();
+    p.draw_circle(4, 4, 3, scene::Color(255, 255, 0, 255), true);
+    check(p.get_pixel_color(4, 4).r() == 255, "Pixmap: draw_circle filled");
+}
+
+static void test_pixmap_blit()
+{
+    scene::Pixmap src(4, 4, 4);
+    src.fill(255, 0, 0, 255);
+    scene::Pixmap dst(8, 8, 4);
+    dst.clear();
+    dst.draw_pixmap(src, 2, 2);
+    check(dst.get_pixel_color(3, 3).r() == 255, "Pixmap: draw_pixmap blit");
+
+    dst.clear();
+    IntRect sr = { 1, 1, 2, 2 };
+    dst.draw_pixmap(src, 0, 0, sr);
+    check(dst.get_pixel_color(0, 0).r() == 255, "Pixmap: draw_pixmap rect");
+}
+
+static void test_pixmap_blend()
+{
+    scene::Pixmap p(2, 2, 4);
+    p.fill(0, 0, 0, 0);
+    p.blend_pixel(0u, 0u, scene::Color(255, 0, 0, 128), 0.5f,
+                   scene::Pixmap::BlendMode::copy);
+    scene::Color c = p.get_pixel_color(0, 0);
+    check(c.r() == 255 && c.a() == 64, "Pixmap: blend_pixel copy 50%");
+
+    scene::Pixmap src(2, 2, 4);
+    src.fill(255, 0, 0, 64);
+    scene::Pixmap dst2(2, 2, 4);
+    dst2.fill(0, 0, 255, 255);
+    dst2.draw_pixmap_blended(src, 0, 0, 0.5f, scene::Pixmap::BlendMode::alpha);
+    c = dst2.get_pixel_color(0, 0);
+    check(c.b() > 200 && c.r() > 0, "Pixmap: draw_pixmap_blended mixed");
+}
+
+static void test_pixmap_crop()
+{
+    scene::Pixmap src(4, 4, 4);
+    src.fill(0, 255, 0, 255);
+    src.set_pixel(1u, 1u, static_cast<gl::u8>(0), static_cast<gl::u8>(0),
+                  static_cast<gl::u8>(255), static_cast<gl::u8>(255));
+    IntRect cr = { 1, 1, 2, 2 };
+    scene::Pixmap* c = src.crop(cr);
+    check(c && c->width == 2, "Pixmap: crop result dims");
+    delete c;
+}
+
+static void test_pixmap_color_ops()
+{
+    scene::Pixmap p(2, 2, 4);
+    p.fill(255, 255, 255, 255);
+    p.tint(128, 255, 64);
+    scene::Color c = p.get_pixel_color(0, 0);
+    check(c.r() == 128 && c.g() == 255, "Pixmap: tint");
+
+    p.fill(255, 0, 0, 255);
+    p.replace_color(scene::Color(255, 0, 0, 255), scene::Color(0, 255, 0, 255), 0.1f);
+    c = p.get_pixel_color(0, 0);
+    check(c.r() == 0 && c.g() == 255, "Pixmap: replace_color");
+}
+
+static void test_pixmap_convert_resize()
+{
+    scene::Pixmap p(2, 2, 3);
+    p.fill(10, 20, 30, 0);
+    scene::Pixmap* rgba = p.convert_to_rgba();
+    check(rgba && rgba->components == 4, "Pixmap: convert_to_rgba");
+    delete rgba;
+
+    scene::Pixmap p2(4, 4, 4);
+    p2.fill(255, 0, 0, 255);
+    scene::Pixmap* r = p2.resize(2, 2);
+    check(r && r->width == 2, "Pixmap: resize dims");
+    delete r;
+}
+
+static void test_pixmap_filters()
+{
+    scene::Pixmap p(4, 4, 4);
+    p.fill(255, 255, 255, 255);
+    scene::Pixmap* b = p.apply_blur(1);
+    check(b && b->get_pixel_color(1,1).r() == 255, "Pixmap: apply_blur");
+    delete b;
+    scene::Pixmap* g = p.apply_gaussian_blur(1);
+    check(g != nullptr, "Pixmap: apply_gaussian_blur");
+    delete g;
+    scene::Pixmap* s = p.apply_sharpen();
+    check(s != nullptr, "Pixmap: apply_sharpen");
+    delete s;
+    scene::Pixmap* e = p.apply_edge_detection();
+    check(e != nullptr, "Pixmap: apply_edge_detection");
+    delete e;
+    scene::Pixmap* em = p.apply_emboss();
+    check(em != nullptr, "Pixmap: apply_emboss");
+    delete em;
+}
+
+// ── _ready/_update hooks: record call order to verify propagation rules ──
 static int g_order = 0;
 
 struct ProbeNode : Node3D
@@ -38,7 +203,21 @@ protected:
 
 int main()
 {
-    // ---- hierarchy & ownership ----
+    // ── Pixmap tests ──
+    printf("--- Pixmap ---\n");
+    test_pixmap_basics();
+    test_pixmap_pixels();
+    test_pixmap_flip();
+    test_pixmap_drawing();
+    test_pixmap_blit();
+    test_pixmap_blend();
+    test_pixmap_crop();
+    test_pixmap_color_ops();
+    test_pixmap_convert_resize();
+    test_pixmap_filters();
+    printf("\n");
+
+    // ── hierarchy & ownership ──
     {
         Node root("root");
         Node* a = root.add_child(new Node("a"));

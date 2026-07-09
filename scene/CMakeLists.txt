@@ -6,6 +6,13 @@ add_library(scene STATIC
     src/Mesh.cpp
     src/Camera3D.cpp
     src/Scene.cpp
+    src/ByteArray.cpp
+    src/IO.cpp
+    src/Filesystem.cpp
+    src/AssetManager.cpp
+    src/Color.cpp
+    src/Pixmap.cpp
+    src/stb_impl.cpp
 )
 
 target_include_directories(scene
