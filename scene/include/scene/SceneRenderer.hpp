@@ -14,6 +14,7 @@ class FrameBuffer;
 class Camera3D;
 class WaterNode;
 class LightNode;
+class ParticleSystemNode;
 
 // Draws a Scene. This is the engine-side boundary: game code builds the node
 // tree and calls render() — it never touches coregl directly.
@@ -99,6 +100,8 @@ private:
                              float camNear, float camFar);
     void draw_debug_views(int viewport_w, int viewport_h);
     static void collect_water(Node* node, std::vector<WaterNode*>& out);
+    void draw_particles(const Mat4& viewProj);
+    static void collect_particles(Node* node, std::vector<ParticleSystemNode*>& out);
 
     // forward pass
     gl::Shader m_forward;
@@ -166,6 +169,12 @@ private:
     gl::Shader m_debug;
     gl::i32 m_locDRect = -1;
     gl::i32 m_locDTargetSize = -1;
+
+    // particle billboards: vertices already baked in world space by each
+    // ParticleSystemNode, so the shader only applies viewProj
+    gl::Shader m_particle;
+    gl::i32 m_locPViewProj = -1;
+    std::vector<ParticleSystemNode*> m_particleSystems; // reused across frames
 
     // procedural sky pass
     gl::Shader m_sky;

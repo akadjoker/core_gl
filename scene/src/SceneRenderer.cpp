@@ -3,6 +3,7 @@
 #include "scene/LightNode.hpp"
 #include "scene/Material.hpp"
 #include "scene/OceanNode.hpp"
+#include "scene/ParticleSystemNode.hpp"
 #include "scene/WaterNode.hpp"
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_renderer.hpp>
@@ -177,6 +178,13 @@ bool SceneRenderer::init()
         !loadStage(m_sky, gl::PipelineStage::FRAGMENT, kSkyFS) || !m_sky.Link())
         return false;
 
+    if (!loadStage(m_particle, gl::PipelineStage::VERTEX, kParticleVS) ||
+        !loadStage(m_particle, gl::PipelineStage::FRAGMENT, kParticleFS) || !m_particle.Link())
+        return false;
+    m_locPViewProj = m_particle.GetLocation("u_viewProj");
+    m_particle.Bind();
+    m_particle.SetInt("u_tex", 0);
+
     // ocean pass is optional: a compile failure only disables OceanNodes
     m_ocean_ready = loadStage(m_oceanShader, gl::PipelineStage::VERTEX, kOceanVS) &&
                     loadStage(m_oceanShader, gl::PipelineStage::FRAGMENT, kOceanFS) &&
@@ -207,6 +215,7 @@ void SceneRenderer::release()
     m_water.Release();
     m_oceanShader.Release();
     m_sky.Release();
+    m_particle.Release();
     m_tonemap.Release();
     m_godray.Release();
     m_hdrFbo.Release();
@@ -522,6 +531,49 @@ void SceneRenderer::collect_water(Node* node, std::vector<WaterNode*>& out)
         collect_water(child, out);
 }
 
+void SceneRenderer::collect_particles(Node* node, std::vector<ParticleSystemNode*>& out)
+{
+    ParticleSystemNode* p = node->as<ParticleSystemNode>();
+    if (p) out.push_back(p);
+    for (Node* child : node->get_children())
+        collect_particles(child, out);
+}
+
+// Billboards are baked in world space by each node's simulation step
+// (Scene::update -> Node3D::_update -> simulate); here we only need the
+// camera basis to orient them and a viewProj to draw. Blend mode is
+// per-system (additive glow vs. alpha smoke); depth write off so
+// overlapping particles don't fight each other, depth test on so they sink
+// behind opaque geometry correctly.
+void SceneRenderer::draw_particles(const Mat4& viewProj)
+{
+    if (m_particleSystems.empty()) return;
+
+    gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(true);
+
+    m_particle.Bind();
+    m_particle.SetMat4(m_locPViewProj, viewProj.x);
+
+    for (ParticleSystemNode* ps : m_particleSystems)
+    {
+        if (ps->active_count() <= 0) continue;
+        if (ps->blend == ParticleBlendMode::Additive)
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE);
+        else
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                          gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+        gl::Texture* tex = ps->texture ? ps->texture : &m_white;
+        tex->Bind(0);
+        ps->quad_mesh().vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, (u32)ps->active_count() * 6u);
+    }
+
+    gl::Renderer::SetBlend(false);
+    gl::Renderer::SetDepthWrite(true);
+}
+
 void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
 {
     // cull against this view's own frustum
@@ -781,6 +833,19 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     // in whatever target the main view used)
     if (!m_waters.empty())
         draw_water_surfaces(view, proj, cameraPos, camera->get_near(), camera->get_far());
+
+    // particles: billboard toward the active camera, then draw over
+    // everything opaque/water already in this target
+    m_particleSystems.clear();
+    collect_particles(&scene.root(), m_particleSystems);
+    if (!m_particleSystems.empty())
+    {
+        Vec3 camRight = Mat4(camera->get_global_rotation()) * Vec3(1.f, 0.f, 0.f);
+        Vec3 camUp = Mat4(camera->get_global_rotation()) * Vec3(0.f, 1.f, 0.f);
+        for (ParticleSystemNode* ps : m_particleSystems)
+            ps->build_billboards(camRight, camUp);
+        draw_particles(proj * view);
+    }
 
     if (post)
     {

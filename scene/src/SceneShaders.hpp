@@ -832,6 +832,39 @@ void main()
 }
 )";
 
+// ── particle billboards: vertices already baked in world space (the CPU
+// sim writes camera-facing quads directly), so the vertex stage only
+// applies viewProj. Per-particle color rides in the tangent slot (unused
+// by billboards) rather than adding a color field to MeshVertex globally. ──
+static const char* kParticleVS = R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 2) in vec4 a_colorAsTangent;
+layout(location = 3) in vec2 a_uv;
+uniform mat4 u_viewProj;
+out vec2 v_uv;
+out vec4 v_color;
+void main()
+{
+    v_uv = a_uv;
+    v_color = a_colorAsTangent;
+    gl_Position = u_viewProj * vec4(a_position, 1.0);
+}
+)";
+
+static const char* kParticleFS = R"(
+in vec2 v_uv;
+in vec4 v_color;
+out vec4 OutColor;
+uniform sampler2D u_tex;
+void main()
+{
+    vec4 tex = texture(u_tex, v_uv);
+    vec4 c = tex * v_color;
+    if (c.a < 0.003) discard;
+    OutColor = c;
+}
+)";
+
 // debug overlay: shows an extra view's texture in a corner rect
 static const char* kDebugFS = R"(
 in vec2 v_uv;

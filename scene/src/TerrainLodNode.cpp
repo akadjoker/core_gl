@@ -406,7 +406,7 @@ void TerrainLodNode::modify_height(float wx, float wz, float delta, float radius
 
     bake_positions();
     calculate_normals();
-    m_terrainMesh.update_vertices();
+    m_terrainMesh.update_vertices(m_verts.data(), (u32)m_verts.size());
     m_forceRecalc = true;
 }
 
@@ -455,6 +455,6 @@ void TerrainLodNode::smooth_area(float wx, float wz, float radius, int iteration
 
     bake_positions();
     calculate_normals();
-    m_terrainMesh.update_vertices();
+    m_terrainMesh.update_vertices(m_verts.data(), (u32)m_verts.size());
     m_forceRecalc = true;
 }

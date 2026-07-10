@@ -53,8 +53,9 @@ public:
     // Re-uploads the index buffer from the caller's data (icount indices,
     // must fit the allocation). Used by LOD terrain rebuilding its IBO.
     void update_indices(const u32* indices, u32 icount);
-    // Re-uploads the vertex buffer from the CPU-side m_vertices.
-    void update_vertices();
+    // Re-uploads the vertex buffer from the caller's data (vcount vertices,
+    // must fit the allocation). Used by LOD terrain edits and particles.
+    void update_vertices(const MeshVertex* verts, u32 vcount);
     // Sets the first surface's index_count for dynamic IBO meshes (LOD terrain).
     void set_dynamic_index_count(u32 icount);
 

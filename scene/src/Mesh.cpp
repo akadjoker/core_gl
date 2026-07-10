@@ -179,10 +179,12 @@ void Mesh::update_indices(const u32* indices, u32 icount)
     m_ibo.Upload(indices, (size_t)icount * sizeof(u32));
 }
 
-void Mesh::update_vertices()
+void Mesh::update_vertices(const MeshVertex* verts, u32 vcount)
 {
-    if (!m_uploaded || !m_dynamic || m_vertices.empty()) return;
-    m_vbo.Upload(m_vertices.data(), m_vertices.size() * sizeof(MeshVertex));
+    if (!m_uploaded || !m_dynamic || !verts || vcount == 0) return;
+    if ((size_t)vcount * sizeof(MeshVertex) > m_vertices.size() * sizeof(MeshVertex))
+        return; // fits allocation
+    m_vbo.Upload(verts, (size_t)vcount * sizeof(MeshVertex));
 }
 
 void Mesh::set_dynamic_index_count(u32 icount)
