@@ -92,18 +92,18 @@ int main(int argc, char** argv)
     // their own shadow maps — just nodes, the renderer does the rest
     PointLight* orb = scene.root().create_child<PointLight>("orb");
     orb->color = Vec3(1.f, 0.55f, 0.25f);
-    orb->intensity = 35.f;
+    orb->intensity = 60.f;
     orb->range = 30.f;
     orb->cast_shadows = true;
 
     SpotLight* spot = scene.root().create_child<SpotLight>("spot");
     spot->color = Vec3(0.4f, 0.7f, 1.f);
-    spot->intensity = 150.f;
+    spot->intensity = 700.f;
     spot->range = 80.f;
     spot->inner_angle = 0.30f;
     spot->outer_angle = 0.45f;
     spot->cast_shadows = true;
-    spot->set_position(-18.f, 20.f, 26.f);
+    spot->set_position(-16.f, 14.f, 20.f);
     spot->look_at(Vec3(0.f, 0.f, 0.f)); // at the tower
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");

@@ -182,9 +182,16 @@ void Shader::Unbind()
 
 i32 Shader::GetLocation(const char* name) const
 {
-    // pure map lookup — the cache was fully populated at Link()
     auto it = uniformCache.find(hashName(name));
-    return (it != uniformCache.end()) ? it->second : -1;
+    if (it != uniformCache.end()) return it->second;
+
+    // Cache miss: introspection only reports arrays as "name[0]", so
+    // individual elements ("name[3]") land here on their first use. Ask the
+    // driver once and memoize — hot paths stay a pure map lookup.
+    if (!id) return -1;
+    i32 location = glGetUniformLocation(id, name);
+    uniformCache[hashName(name)] = location;
+    return location;
 }
 
 i32 Shader::GetAttribLocation(const char* name) const

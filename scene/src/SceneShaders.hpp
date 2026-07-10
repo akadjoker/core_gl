@@ -150,14 +150,20 @@ float pointCubeSample(int slot, vec3 dir)
 }
 
 // 1 = lit, 0 = shadowed. The map stores length(frag - light) / range.
-float pointShadowFactor(int slot, vec3 lightToFrag, float range)
+// fragToLightRay = light position - fragment position (UNNORMALIZED: the
+// disk offsets are added to the raw ray, giving a sub-texel angular spread).
+float pointShadowFactor(int slot, vec3 fragToLightRay, float range)
 {
-    float current = (length(lightToFrag) - 0.15) / range;
-    vec3 dir = normalize(lightToFrag);
-    float lit = 0.0;
+    float invZfar = 1.0 / range;
+    float currentDepth = (length(fragToLightRay) - 0.15) * invZfar;
+    float diskRadius = (1.0 + invZfar) * 0.04;
+    float shadowFactor = 0.0;
     for (int i = 0; i < 20; ++i)
-        lit += current > pointCubeSample(slot, dir + kCubeDirs[i] * 0.03) ? 0.0 : 1.0;
-    return lit / 20.0;
+        shadowFactor +=
+            currentDepth > pointCubeSample(slot, kCubeDirs[i] * diskRadius - fragToLightRay)
+                ? 0.0
+                : 1.0;
+    return shadowFactor / 20.0;
 }
 
 float spotMapSample(int slot, vec2 uv)
@@ -166,19 +172,28 @@ float spotMapSample(int slot, vec2 uv)
     return texture(u_spotShadow1, uv).r;
 }
 
-// 1 = lit, 0 = shadowed. Projective map + 3x3 PCF.
+// 1 = lit, 0 = shadowed. Projective map, 3x3 PCF snapped to texel centers,
+// out-of-map means fully lit.
 float spotShadowFactor(int slot, vec3 worldPos)
 {
-    vec4 lp = u_spotShadowMat[slot] * vec4(worldPos + normalize(v_normal) * 0.02, 1.0);
+    vec4 lp = u_spotShadowMat[slot] * vec4(worldPos, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
-    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
-    vec2 texel =
-        1.0 / vec2(slot == 0 ? textureSize(u_spotShadow0, 0) : textureSize(u_spotShadow1, 0));
-    float lit = 0.0;
+    float bias = 0.002;
+    if (p.x < 0.001 || p.x > 0.999 || p.y < 0.001 || p.y > 0.999) return 1.0;
+    if (p.z > 1.0 - bias || p.z < bias) return 1.0;
+    float compare = p.z - bias;
+
+    vec2 texelSize =
+        vec2(slot == 0 ? textureSize(u_spotShadow0, 0) : textureSize(u_spotShadow1, 0));
+    vec2 texelSizeInv = 1.0 / texelSize;
+    vec2 pixelPos = p.xy * texelSize + vec2(0.5);
+    vec2 startTexel = (pixelPos - fract(pixelPos)) * texelSizeInv;
+
+    float s = 0.0;
     for (int x = -1; x <= 1; ++x)
         for (int y = -1; y <= 1; ++y)
-            lit += (p.z - 0.0015) > spotMapSample(slot, p.xy + vec2(x, y) * texel) ? 0.0 : 1.0;
-    return lit / 9.0;
+            s += step(compare, spotMapSample(slot, startTexel + vec2(x, y) * texelSizeInv));
+    return s / 9.0;
 }
 
 void main()
@@ -237,7 +252,7 @@ void main()
         if (ndl <= 0.0 || att <= 0.0) continue;
         float sh = 1.0;
         int slot = int(u_pointColor[i].w);
-        if (slot >= 0) sh = pointShadowFactor(slot, -toL, range);
+        if (slot >= 0) sh = pointShadowFactor(slot, toL, range);
         float sp = pow(max(dot(n, normalize(L + viewDir)), 0.0), u_specular.y) * u_specular.x;
         color += u_pointColor[i].rgb * (albedo * ndl + vec3(sp)) * att * sh;
     }

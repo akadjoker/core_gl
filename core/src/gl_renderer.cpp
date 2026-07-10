@@ -240,6 +240,13 @@ bool Renderer::Init(LoadProc proc)
 #else
     s.hasCompute = (s.major > 4) || (s.major == 4 && s.minor >= 3); // GL 4.3+
 #endif
+
+#if !defined(CORE_GL_ES)
+    // filter across cube faces (ES 3.0 is always seamless; desktop opts in).
+    // Without it, cubemap samples near face edges clamp per-face — visible
+    // seams on point-light shadows and reflection probes.
+    glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+#endif
     return true;
 }
 

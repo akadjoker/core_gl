@@ -6,6 +6,7 @@
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_renderer.hpp>
 #include <coregl/gl_vertex_array.hpp>
+#include <cstdio>
 
 #include "SceneShaders.hpp"
 
@@ -285,6 +286,7 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
 
     gl::Renderer::SetDepthTest(true);
     gl::Renderer::SetDepthWrite(true);
+    gl::Renderer::SetDepthFunction(gl::DepthFunction::LESS);
     gl::Renderer::SetCull(gl::CullMode::NONE);
 
     int pointSlot = 0, spotSlot = 0;
@@ -336,8 +338,13 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
 
             const Vec3 dir = spot->direction();
             const float fovDeg = spot->outer_angle * 2.f * 57.29578f;
-            Mat4 vp = Mat4::Perspective((double)fovDeg, 1.0, 0.05, (double)spot->range) *
-                      Mat4::LookAt(pos, pos + dir, Vec3(0.001f, 1.f, 0.001f));
+            // the near plane must scale with the range: a tiny near crams
+            // all usable depth into the last few thousandths of the map and
+            // the compare bias then covers the whole scene (no shadow)
+            const float nearPlane = spot->range * 0.05f;
+            Mat4 vp =
+                Mat4::Perspective((double)fovDeg, 1.0, (double)nearPlane, (double)spot->range) *
+                Mat4::LookAt(pos, pos + dir, Vec3(0.001f, 1.f, 0.001f));
             m_spotShadowMat[spotSlot] = vp;
 
             m_depth.Bind();
@@ -359,6 +366,7 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
 void SceneRenderer::set_light_uniforms()
 {
     int points = 0, spots = 0, pointSlot = 0, spotSlot = 0;
+    char name[64];
     for (LightNode* light : m_lights)
     {
         const Vec3 pos = light->get_global_position();
@@ -374,8 +382,10 @@ void SceneRenderer::set_light_uniforms()
                 point->shadow_tex().Bind(2 + (gl::u32)pointSlot);
                 slot = (float)pointSlot++;
             }
-            m_forward.SetVec4(m_locPointPosRange0 + points, pos.x, pos.y, pos.z, point->range);
-            m_forward.SetVec4(m_locPointColor0 + points, c.x, c.y, c.z, slot);
+            std::snprintf(name, sizeof(name), "u_pointPosRange[%d]", points);
+            m_forward.SetVec4(name, pos.x, pos.y, pos.z, point->range);
+            std::snprintf(name, sizeof(name), "u_pointColor[%d]", points);
+            m_forward.SetVec4(name, c.x, c.y, c.z, slot);
             ++points;
         }
         else if (spot && spots < 4)
@@ -384,20 +394,24 @@ void SceneRenderer::set_light_uniforms()
             if (spot->cast_shadows && spotSlot < 2)
             {
                 spot->shadow_tex().Bind(4 + (gl::u32)spotSlot);
-                m_forward.SetMat4(m_locSpotShadowMat0 + spotSlot, m_spotShadowMat[spotSlot].x);
+                std::snprintf(name, sizeof(name), "u_spotShadowMat[%d]", spotSlot);
+                m_forward.SetMat4(name, m_spotShadowMat[spotSlot].x);
                 slot = (float)spotSlot++;
             }
             const Vec3 dir = spot->direction();
-            m_forward.SetVec4(m_locSpotPosRange0 + spots, pos.x, pos.y, pos.z, spot->range);
-            m_forward.SetVec4(m_locSpotDirInner0 + spots, dir.x, dir.y, dir.z,
-                              cosf(spot->inner_angle));
-            m_forward.SetVec4(m_locSpotColorOuter0 + spots, c.x, c.y, c.z, cosf(spot->outer_angle));
-            m_forward.SetFloat(m_locSpotShadowSlot0 + spots, slot);
+            std::snprintf(name, sizeof(name), "u_spotPosRange[%d]", spots);
+            m_forward.SetVec4(name, pos.x, pos.y, pos.z, spot->range);
+            std::snprintf(name, sizeof(name), "u_spotDirInner[%d]", spots);
+            m_forward.SetVec4(name, dir.x, dir.y, dir.z, cosf(spot->inner_angle));
+            std::snprintf(name, sizeof(name), "u_spotColorOuter[%d]", spots);
+            m_forward.SetVec4(name, c.x, c.y, c.z, cosf(spot->outer_angle));
+            std::snprintf(name, sizeof(name), "u_spotShadowSlot[%d]", spots);
+            m_forward.SetFloat(name, slot);
             ++spots;
         }
     }
-    m_forward.SetInt(m_locPointCount, points);
-    m_forward.SetInt(m_locSpotCount, spots);
+    m_forward.SetInt("u_pointCount", points);
+    m_forward.SetInt("u_spotCount", spots);
 }
 
 void SceneRenderer::collect_water(Node* node, std::vector<WaterNode*>& out)

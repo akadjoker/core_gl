@@ -1,0 +1,21 @@
+#version 300 es
+precision highp float;
+layout (location = 0) in vec3 aPos;
+
+
+out vec3 TexCoords;
+
+uniform mat4 projection;
+uniform mat4 view;
+
+void main()
+{
+    TexCoords = aPos;
+    
+    // Remove translação da view matrix (só rotação)
+    mat4 viewNoTranslation = mat4(mat3(view));
+    vec4 pos = projection * viewNoTranslation * vec4(aPos, 1.0);
+    
+    // Truque: põe z = w para ficar sempre no far plane
+    gl_Position = pos.xyww;
+}

@@ -10,8 +10,10 @@ class Shader
 {
     u32 id = 0;                                      // GL program
     u32 stages[(u8)PipelineStage::STAGE_COUNT] = {}; // compiled shader per stage
-    std::unordered_map<u32, i32> uniformCache;       // FNV-1a hash of name -> location
-    char log[1024] = {};                             // last compile/link error
+    // FNV-1a hash of name -> location; misses (array elements) are memoized
+    // on first use from GetLocation() const, hence mutable
+    mutable std::unordered_map<u32, i32> uniformCache;
+    char log[1024] = {}; // last compile/link error
 
 public:
     Shader();
