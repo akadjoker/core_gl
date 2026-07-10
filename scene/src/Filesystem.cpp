@@ -87,8 +87,7 @@ bool Filesystem::resolvePath(const char* filename, char* outPath, gl::u32 outSiz
         int n = std::snprintf(outPath, outSize, "%s/%s", entry.path, filename);
         if (n <= 0 || n >= (int)outSize) continue;
 
-        if (iface->exists(outPath))
-            return true;
+        if (iface->exists(outPath)) return true;
     }
 
     outPath[0] = '\0';
@@ -158,6 +157,9 @@ const PathEntry* Filesystem::getPath(gl::u32 index) const
 Filesystem& getFilesystem()
 {
     static Filesystem instance;
+    // first use registers the platform's default file backend, so plain
+    // desktop apps read files without any setup call
+    if (!io::getFileInterface()) io::registerDefaultDesktop();
     return instance;
 }
 

@@ -1,0 +1,9 @@
+newmtl walls
+Kd 0.78 0.62 0.45
+Ks 0.05 0.05 0.05
+Ns 16
+
+newmtl roof
+Kd 0.55 0.18 0.12
+Ks 0.30 0.30 0.30
+Ns 64
