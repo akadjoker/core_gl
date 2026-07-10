@@ -199,6 +199,28 @@ bool SceneRenderer::init()
     m_grass.Bind();
     m_grass.SetInt("u_tex", 0);
 
+    // terrain splatting shader
+    if (!loadStage(m_terrainShader, gl::PipelineStage::VERTEX, kTerrainVS) ||
+        !loadStage(m_terrainShader, gl::PipelineStage::FRAGMENT, kTerrainFS) ||
+        !m_terrainShader.Link())
+        return false;
+    m_locTModel = m_terrainShader.GetLocation("u_model");
+    m_locTViewProj = m_terrainShader.GetLocation("u_viewProj");
+    m_locTView = m_terrainShader.GetLocation("u_view");
+    m_locTLightDir = m_terrainShader.GetLocation("u_lightDir");
+    m_locTAmbient = m_terrainShader.GetLocation("u_ambient");
+    m_locTClipPlane = m_terrainShader.GetLocation("u_clipPlane");
+    m_terrainShader.Bind();
+    m_terrainShader.SetInt("u_blendMap0", 0);
+    m_terrainShader.SetInt("u_blendMap1", 1);
+    for (int i = 0; i < 8; ++i)
+    {
+        char name[32];
+        snprintf(name, sizeof(name), "u_layerDiffuse[%d]", i);
+        m_terrainShader.SetInt(name, 2 + i);
+    }
+    m_terrainShader.SetInt("u_layerCount", 0);
+
     // ocean pass is optional: a compile failure only disables OceanNodes
     m_ocean_ready = loadStage(m_oceanShader, gl::PipelineStage::VERTEX, kOceanVS) &&
                     loadStage(m_oceanShader, gl::PipelineStage::FRAGMENT, kOceanFS) &&
@@ -247,7 +269,9 @@ void SceneRenderer::release()
     m_sky.Release();
     m_particle.Release();
     m_grass.Release();
+    m_terrainShader.Release();
     m_tonemap.Release();
+    m_godray.Release();
     m_godray.Release();
     m_hdrFbo.Release();
     m_pingFbo.Release();
@@ -622,8 +646,7 @@ void SceneRenderer::draw_grass(const Mat4& viewProj)
         m_grass.SetFloat("u_windSpeed", g->wind_speed());
         m_grass.SetFloat("u_cutout", g->cutout());
         m_grass.SetVec3("u_lightDir", g->light_dir().x, g->light_dir().y, g->light_dir().z);
-        m_grass.SetVec3("u_lightColor", g->light_color().x, g->light_color().y,
-                        g->light_color().z);
+        m_grass.SetVec3("u_lightColor", g->light_color().x, g->light_color().y, g->light_color().z);
         m_grass.SetFloat("u_ambient", g->ambient());
         g->mesh().vao().Bind();
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, g->index_count());
@@ -883,6 +906,12 @@ void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, cons
     m_water.SetVec3(m_locWLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
     m_water.SetVec2(m_locWCamPlanes, camNear, camFar);
 
+    // every surface alpha-fades at the waterline (soft shoreline) — one
+    // blend setup for the whole pass
+    gl::Renderer::SetBlend(true);
+    gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                  gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+
     for (WaterNode* w : m_waters)
     {
         if (!w->quad().is_uploaded()) continue;
@@ -892,21 +921,12 @@ void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, cons
         {
             if (m_ocean_ready)
             {
-                // the surface alpha-fades at the waterline (soft shoreline)
-                gl::Renderer::SetBlend(true);
-                gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
-                                              gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
                 draw_ocean_surface(ocean, view, proj, cameraPos);
-                gl::Renderer::SetBlend(false);
+                m_water.Bind(); // back to the plain water shader for the rest
             }
-            m_water.Bind(); // back to the plain water shader for the rest
             continue;
         }
 
-        // the surface alpha-fades where it meets the terrain (soft shoreline)
-        gl::Renderer::SetBlend(true);
-        gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
-                                      gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
         w->reflection_tex().Bind(0);
         w->refraction_tex().Bind(1);
         w->refraction_depth_tex().Bind(2);
@@ -918,7 +938,6 @@ void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, cons
         m_water.SetMat4(m_locWModel, w->get_global_transform().x);
         w->quad().vao().Bind();
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, w->quad().index_count());
-        gl::Renderer::SetBlend(false);
     }
     gl::Renderer::SetBlend(false);
 }
@@ -1004,6 +1023,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     m_grassSystems.clear();
     collect_grass(&scene.root(), m_grassSystems);
     if (!m_grassSystems.empty()) draw_grass(proj * view);
+
 
     // water surfaces draw last, depth-tested against the scene (they land
     // in whatever target the main view used)

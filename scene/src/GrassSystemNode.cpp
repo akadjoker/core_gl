@@ -55,24 +55,24 @@ void GrassSystemNode::build()
     {
         switch (m_grassType)
         {
-        case GrassType::TriCross:
-        {
-            const float deg[3] = {0.f, 60.f, 120.f};
-            for (float a : deg)
+            case GrassType::TriCross:
             {
-                float r = a * 3.14159265f / 180.f;
-                Vec3 axis(cosf(r), 0.f, sinf(r));
-                addQuad(verts, c.pos, axis, worldUp, c.size, c.color);
+                const float deg[3] = {0.f, 60.f, 120.f};
+                for (float a : deg)
+                {
+                    float r = a * 3.14159265f / 180.f;
+                    Vec3 axis(cosf(r), 0.f, sinf(r));
+                    addQuad(verts, c.pos, axis, worldUp, c.size, c.color);
+                }
+                break;
             }
-            break;
-        }
-        case GrassType::Cross:
-            addQuad(verts, c.pos, Vec3(1, 0, 0), worldUp, c.size, c.color);
-            addQuad(verts, c.pos, Vec3(0, 0, 1), worldUp, c.size, c.color);
-            break;
-        default:
-            addQuad(verts, c.pos, Vec3(1, 0, 0), worldUp, c.size, c.color);
-            break;
+            case GrassType::Cross:
+                addQuad(verts, c.pos, Vec3(1, 0, 0), worldUp, c.size, c.color);
+                addQuad(verts, c.pos, Vec3(0, 0, 1), worldUp, c.size, c.color);
+                break;
+            default:
+                addQuad(verts, c.pos, Vec3(1, 0, 0), worldUp, c.size, c.color);
+                break;
         }
     }
     if (verts.empty()) return;

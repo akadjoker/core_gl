@@ -60,13 +60,11 @@ int main(int argc, char** argv)
     Scene scene;
     assets::AssetManager& assets = assets::AssetManager::instance();
 
-      
-
     gl::Texture* particle = assets.loadTexture("particles", "assets/textures/light.jpg");
 
     gl::Texture* dot = assets.loadTexture("GRASS", "assets/textures/grass1.png");
-    //assets.createTexture("particle_dot");
-    //buildDotTexture(*dot, 64);
+    // assets.createTexture("particle_dot");
+    // buildDotTexture(*dot, 64);
 
     // simple flat ground so the emitters have something to sit on
     Mesh* groundMesh = scene.create_mesh();
@@ -151,8 +149,8 @@ int main(int argc, char** argv)
     trail->texture = particle;
     trail->blend = ParticleBlendMode::Additive;
     trail->setTrailLength(2.5f);
-    trail->addChain(orbiter, Vec4(1.0f, 0.45f, 0.1f, 0.9f),
-                    Vec4(0.8f, 0.2f, 0.05f, 0.0f), 0.40f, 0.04f);
+    trail->addChain(orbiter, Vec4(1.0f, 0.45f, 0.1f, 0.9f), Vec4(0.8f, 0.2f, 0.05f, 0.0f), 0.40f,
+                    0.04f);
     // ── scorch decals on the ground, normal-oriented (not billboarded) ──
     DecalSystemNode* decals = scene.root().create_child<DecalSystemNode>("decals", 64);
     decals->texture = dot;
@@ -200,7 +198,6 @@ int main(int argc, char** argv)
             fly.handle(ev);
         }
         if (!running) break;
-
 
         gl::u64 now = SDL_GetPerformanceCounter();
         float dt = (float)((double)(now - lastTicks) / (double)freq);

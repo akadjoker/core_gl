@@ -28,6 +28,7 @@ enum NodeType : unsigned short
     NT_INFINITETERRAIN,
     NT_TERRAINLOD,
     NT_RIBBONTRAIL,
+    NT_TERRAINPAGING,
     NT_COUNT
 };
 

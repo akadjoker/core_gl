@@ -190,8 +190,8 @@ private:
     // grass: static mesh per node, wind-sway + alpha-cutout shader
     gl::Shader m_grass;
     gl::i32 m_locGViewProj = -1;
-    std::vector<GrassSystemNode*> m_grassSystems; // reused across frames
-    std::vector<RibbonTrailNode*> m_ribbonTrails; // reused across frames
+    std::vector<GrassSystemNode*> m_grassSystems;       // reused across frames
+    std::vector<RibbonTrailNode*> m_ribbonTrails;       // reused across frames
 
     // procedural sky pass
     gl::Shader m_sky;
@@ -213,11 +213,20 @@ private:
     gl::Shader m_oceanShader;
     bool m_ocean_ready = false;
 
-    gl::Texture m_white; // 1x1 fallback so u_diffuse always samples something
-    gl::Texture m_gray;  // 1x1 neutral detail map
+    gl::Texture m_white;    // 1x1 fallback so u_diffuse always samples something
+    gl::Texture m_gray;     // 1x1 neutral detail map
     gl::Texture m_flareTex; // lens flare atlas (flares.png)
 
     LensFlare m_lensflare; // screen-space sun flare pass
+
+    // terrain shader (texture splatting, Ogre-style)
+    gl::Shader m_terrainShader;
+    gl::i32 m_locTModel = -1;
+    gl::i32 m_locTViewProj = -1;
+    gl::i32 m_locTView = -1;
+    gl::i32 m_locTLightDir = -1;
+    gl::i32 m_locTAmbient = -1;
+    gl::i32 m_locTClipPlane = -1;
 
     Vec3 m_clearColor = Vec3(0.5f, 0.65f, 0.8f);
     Vec3 m_lightDir = Vec3(0.5f, -1.0f, 0.3f);

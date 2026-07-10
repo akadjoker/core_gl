@@ -9,6 +9,7 @@ add_library(scene STATIC
     src/TiledTerrainNode.cpp
     src/InfiniteTerrainNode.cpp
     src/TerrainLodNode.cpp
+    src/TerrainPagingNode.cpp
     src/Camera3D.cpp
     src/Scene.cpp
     src/SceneRenderer.cpp

@@ -79,8 +79,8 @@ private:
         Vec2 size;
         Vec4 color;
     };
-    void addQuad(std::vector<MeshVertex>& v, const Vec3& center, const Vec3& right,
-                const Vec3& up, const Vec2& size, const Vec4& color);
+    void addQuad(std::vector<MeshVertex>& v, const Vec3& center, const Vec3& right, const Vec3& up,
+                 const Vec2& size, const Vec4& color);
 
     GrassType m_grassType;
     std::vector<Clump> m_clumps;

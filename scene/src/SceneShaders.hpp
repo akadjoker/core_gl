@@ -923,3 +923,85 @@ void main()
     OutColor = vec4(texture(u_tex, v_uv).rgb, 1.0);
 }
 )";
+
+// ── terrain shader (texture splatting, multi-layer) ──
+static const char* kTerrainVS = R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_tangent;
+layout(location = 3) in vec2 a_uv;
+uniform mat4 u_model;
+uniform mat4 u_viewProj;
+uniform mat4 u_view;
+uniform vec4 u_clipPlane;
+CLIP_VARYING
+out vec3 v_normal;
+out vec2 v_uv;
+out vec3 v_worldPos;
+void main()
+{
+    vec4 worldPos = u_model * vec4(a_position, 1.0);
+    v_worldPos = worldPos.xyz;
+    v_normal = normalize(mat3(u_model) * a_normal);
+    v_uv = a_uv;
+    CLIP_SETUP(dot(worldPos, u_clipPlane));
+    gl_Position = u_viewProj * worldPos;
+}
+)";
+
+static const char* kTerrainFS = R"(
+in vec3 v_normal;
+in vec2 v_uv;
+in vec3 v_worldPos;
+CLIP_VARYING
+out vec4 OutColor;
+
+uniform vec3 u_lightDir;
+uniform vec3 u_cameraPos;
+uniform vec3 u_ambient;
+
+// up to 8 diffuse layers + 2 blend maps (RGBA = 4 layers each)
+uniform sampler2D u_layerDiffuse[8];
+uniform sampler2D u_blendMap0;
+uniform sampler2D u_blendMap1;
+uniform float u_layerTiling[8];
+uniform int u_layerCount;
+
+void main()
+{
+    CLIP_APPLY
+
+    vec3 N = normalize(v_normal);
+    vec3 L = normalize(-u_lightDir);
+    float NdotL = max(dot(N, L), 0.0);
+
+    // Start with layer 0 (base layer, always full weight)
+    vec4 diffuse = texture(u_layerDiffuse[0], v_uv * u_layerTiling[0]);
+
+    if (u_layerCount > 1)
+    {
+        vec4 blend0 = texture(u_blendMap0, v_uv);
+        float w1 = blend0.r;
+        float w2 = blend0.g;
+        float w3 = blend0.b;
+        float w4 = blend0.a;
+
+        if (u_layerCount > 1) diffuse = mix(diffuse, texture(u_layerDiffuse[1], v_uv * u_layerTiling[1]), w1);
+        if (u_layerCount > 2) diffuse = mix(diffuse, texture(u_layerDiffuse[2], v_uv * u_layerTiling[2]), w2);
+        if (u_layerCount > 3) diffuse = mix(diffuse, texture(u_layerDiffuse[3], v_uv * u_layerTiling[3]), w3);
+        if (u_layerCount > 4) diffuse = mix(diffuse, texture(u_layerDiffuse[4], v_uv * u_layerTiling[4]), w4);
+
+        if (u_layerCount > 5)
+        {
+            vec4 blend1 = texture(u_blendMap1, v_uv);
+            if (u_layerCount > 5) diffuse = mix(diffuse, texture(u_layerDiffuse[5], v_uv * u_layerTiling[5]), blend1.r);
+            if (u_layerCount > 6) diffuse = mix(diffuse, texture(u_layerDiffuse[6], v_uv * u_layerTiling[6]), blend1.g);
+            if (u_layerCount > 7) diffuse = mix(diffuse, texture(u_layerDiffuse[7], v_uv * u_layerTiling[7]), blend1.b);
+        }
+    }
+
+    vec3 ambient = diffuse.rgb * u_ambient;
+    vec3 lit = diffuse.rgb * NdotL;
+    OutColor = vec4(ambient + lit, 1.0);
+}
+)";
