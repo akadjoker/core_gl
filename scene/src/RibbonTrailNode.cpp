@@ -3,166 +3,286 @@
 #include <algorithm>
 #include <cmath>
 
-// ── helpers ──
 static Vec4 lerpV4(const Vec4& a, const Vec4& b, float t)
 {
     return Vec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t,
                 a.w + (b.w - a.w) * t);
 }
+static inline u16 nextRing(u16 idx, int maxEl) { return (idx + 1) % (u16)maxEl; }
+static inline u16 prevRing(u16 idx, int maxEl) { return idx == 0 ? (u16)(maxEl - 1) : (u16)(idx - 1); }
 
 RibbonTrailNode::RibbonTrailNode(const std::string& name, int maxChains, int maxElementsPerChain)
-    : Node3D(name), m_maxChains(maxChains), m_maxElements(maxElementsPerChain)
+    : Node3D(name), m_maxChains(maxChains), m_maxElementsPerChain(maxElementsPerChain)
 {
     m_type = NT_RIBBONTRAIL;
-    m_chains.reserve((size_t)maxChains);
+    if (m_maxChains > MAX_CHAINS) m_maxChains = MAX_CHAINS;
+    if (m_maxChains < 1) m_maxChains = 1;
+    m_elements.resize((size_t)m_maxChains * (size_t)m_maxElementsPerChain);
+    m_elemLength = m_trailLength / (float)m_maxElementsPerChain;
 }
 
 int RibbonTrailNode::addChain(Node3D* emitter, const Vec4& startColor, const Vec4& endColor,
                                float startWidth, float endWidth)
 {
-    if ((int)m_chains.size() >= m_maxChains || !emitter) return -1;
-    Chain ch;
+    if (m_activeChains >= m_maxChains || !emitter) return -1;
+    Chain& ch = m_chains[m_activeChains];
     ch.emitter = emitter;
     ch.startColor = startColor;
     ch.endColor = endColor;
     ch.startWidth = startWidth;
     ch.endWidth = endWidth;
-    ch.elements.reserve((size_t)m_maxElements);
-    m_chains.push_back(ch);
-    return (int)m_chains.size() - 1;
+    ch.active = true;
+    resetTrail(ch);
+    return m_activeChains++;
 }
 
-void RibbonTrailNode::clearChains() { m_chains.clear(); }
+void RibbonTrailNode::clearChains()
+{
+    for (int i = 0; i < m_activeChains; ++i)
+        m_chains[i].active = false;
+    m_activeChains = 0;
+}
 
-// ── per-frame simulation: record the emitter's world position ──
+void RibbonTrailNode::setTrailLength(float seconds)
+{
+    m_trailLength = seconds > 0.01f ? seconds : 0.01f;
+    m_elemLength = m_trailLength / (float)m_maxElementsPerChain;
+}
+
+// ── seed the ring buffer with one element at the emitter position ──
+void RibbonTrailNode::resetTrail(Chain& ch)
+{
+    if (!ch.emitter) return;
+    Vec3 pos = ch.emitter->get_global_position();
+    int base = m_activeChains * m_maxElementsPerChain;
+
+    m_elements[base].position = pos;
+    m_elements[base].color = ch.startColor;
+    m_elements[base].width = ch.startWidth;
+
+    ch.head = 0;
+    ch.tail = 0;
+    ch.count = 1;
+    ch.lastBakedPos = pos;
+}
+
+// ── per-frame: evenly-spaced element baking (Ogre-style ring buffer) ──
 void RibbonTrailNode::_update(float dt)
 {
-    m_time += dt;
-    for (Chain& ch : m_chains)
+    (void)dt;
+    for (int ci = 0; ci < m_activeChains; ++ci)
     {
+        Chain& ch = m_chains[ci];
         if (!ch.active || !ch.emitter) continue;
 
-        // age existing elements
-        for (Element& e : ch.elements)
-            e.age += dt;
-
-        // remove expired
-        while (!ch.elements.empty() && ch.elements.front().age > m_trailLength)
-            ch.elements.erase(ch.elements.begin());
-
-        // record the emitter's current world position
         Vec3 worldPos = ch.emitter->get_global_position();
-        Element newEl;
-        newEl.position = worldPos;
-        newEl.age = 0.f;
+        int base = ci * m_maxElementsPerChain;
+        int maxEl = m_maxElementsPerChain;
+        float sqElem = m_elemLength * m_elemLength;
 
-        if (!ch.elements.empty())
+        if (ch.count == 1)
         {
-            float dist = (worldPos - ch.elements.back().position).length();
-            if (dist < m_minSeg) continue; // too close, skip
-        }
-        ch.elements.push_back(newEl);
+            // seed exists; emitter has moved far enough → bake first segment
+            float dx = worldPos.x - ch.lastBakedPos.x;
+            float dy = worldPos.y - ch.lastBakedPos.y;
+            float dz = worldPos.z - ch.lastBakedPos.z;
+            if (dx * dx + dy * dy + dz * dz < sqElem * 0.25f) continue;
 
-        // cap
-        while ((int)ch.elements.size() > m_maxElements)
-            ch.elements.erase(ch.elements.begin());
+            Vec3 dir(worldPos.x - ch.lastBakedPos.x, worldPos.y - ch.lastBakedPos.y,
+                     worldPos.z - ch.lastBakedPos.z);
+            float dlen = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+            dir = Vec3(dir.x / dlen, dir.y / dlen, dir.z / dlen);
+            Vec3 baked(worldPos.x - dir.x * m_elemLength, worldPos.y - dir.y * m_elemLength,
+                       worldPos.z - dir.z * m_elemLength);
+
+            m_elements[base + ch.head].position = baked;
+            ch.lastBakedPos = baked;
+
+            u16 newHead = nextRing(ch.head, maxEl);
+            m_elements[base + newHead].position = worldPos;
+            m_elements[base + newHead].color = ch.startColor;
+            m_elements[base + newHead].width = ch.startWidth;
+            ch.head = newHead;
+            ch.count = 2;
+            ch.lastBakedPos = worldPos;
+            continue;
+        }
+
+        // normal case: extend head
+        Element& headElem = m_elements[base + ch.head];
+        float dx = worldPos.x - headElem.position.x;
+        float dy = worldPos.y - headElem.position.y;
+        float dz = worldPos.z - headElem.position.z;
+        float sqDist = dx * dx + dy * dy + dz * dz;
+
+        if (sqDist >= sqElem)
+        {
+            // bake: lock head at exactly m_elemLength from the emitter
+            float dist = sqrtf(sqDist);
+            float inv = 1.f / dist;
+            Vec3 dir(dx * inv, dy * inv, dz * inv);
+            headElem.position = Vec3(worldPos.x - dir.x * m_elemLength,
+                                     worldPos.y - dir.y * m_elemLength,
+                                     worldPos.z - dir.z * m_elemLength);
+
+            u16 newHead = nextRing(ch.head, maxEl);
+            if (ch.count >= (u16)maxEl)
+            {
+                // buffer full → shrink tail smoothly (Ogre fade-out trick)
+                u16 preTail = prevRing(ch.tail, maxEl);
+                if (preTail != ch.head)
+                {
+                    Element& tailElem = m_elements[base + ch.tail];
+                    Element& preElem = m_elements[base + preTail];
+                    float tdx = tailElem.position.x - preElem.position.x;
+                    float tdy = tailElem.position.y - preElem.position.y;
+                    float tdz = tailElem.position.z - preElem.position.z;
+                    float tlen = tdx * tdx + tdy * tdy + tdz * tdz;
+                    if (tlen > 1e-12f)
+                    {
+                        tlen = sqrtf(tlen);
+                        float shrink = m_elemLength - dist;
+                        if (shrink > 0.f)
+                        {
+                            if (shrink > tlen) shrink = tlen;
+                            float s = shrink / tlen;
+                            tailElem.position = Vec3(preElem.position.x + tdx * s,
+                                                     preElem.position.y + tdy * s,
+                                                     preElem.position.z + tdz * s);
+                        }
+                    }
+                }
+                ch.tail = nextRing(ch.tail, maxEl);
+            }
+            else
+            {
+                ch.count++;
+            }
+
+            m_elements[base + newHead].position = worldPos;
+            m_elements[base + newHead].color = ch.startColor;
+            m_elements[base + newHead].width = ch.startWidth;
+            ch.head = newHead;
+            ch.lastBakedPos = worldPos;
+        }
+        else
+        {
+            // just nudge the head to the current position
+            headElem.position = worldPos;
+        }
     }
 }
 
-// ── GPU buffer management ──
+// ── GPU: allocate once with upload_dynamic() ──
 bool RibbonTrailNode::ensure_gpu()
 {
     if (m_gpu_ready) return true;
 
-    // worst-case vertex/index count: each chain has m_maxElements elements,
-    // each pair of consecutive elements produces 2 vertices (left/right of
-    // the camera-facing quad) and the strip-indexing needs 2 tri per segment.
-    // Allocated once, updated per frame via glBufferSubData (the same
-    // strategy ParticleSystemNode uses).
-    int maxVerts = m_maxChains * m_maxElements * 2;
-    int maxIndices = m_maxChains * (m_maxElements - 1) * 6;
-
-    if (maxVerts < 1) maxVerts = 1;
-    if (maxIndices < 1) maxIndices = 6;
+    int maxVerts = m_maxChains * m_maxElementsPerChain * 2;
+    int maxIndices = m_maxChains * (m_maxElementsPerChain - 1) * 6;
+    if (maxVerts < 2) maxVerts = 2;
+    if (maxIndices < 6) maxIndices = 6;
 
     std::vector<MeshVertex> verts((size_t)maxVerts);
-    std::vector<u32>        idx((size_t)maxIndices);
-    for (int i = 0; i < maxVerts; ++i)
+    std::vector<u32> idx((size_t)maxIndices);
+
+    // pre-build static strip index pattern (never changes)
+    for (int seg = 0; seg < m_maxChains * (m_maxElementsPerChain - 1); ++seg)
     {
-        verts[i].position = Vec3(0, 0, 0);
-        verts[i].normal = Vec3(0, 1, 0);
-        verts[i].tangent = Vec4(1, 1, 1, 1);
-        verts[i].uv = Vec2(0, 0);
-    }
-    // static index pattern: each segment = 2 triangles (6 indices),
-    // connecting 4 vertices from two consecutive element pairs
-    for (int seg = 0; seg < m_maxChains * (m_maxElements - 1); ++seg)
-    {
-        u32 p0 = (u32)(seg * 2);     // prev left
-        u32 p1 = (u32)(seg * 2 + 1); // prev right
-        u32 c0 = (u32)(seg * 2 + 2); // curr left
-        u32 c1 = (u32)(seg * 2 + 3); // curr right
+        u32 p0 = (u32)(seg * 2), p1 = (u32)(seg * 2 + 1);
+        u32 c0 = (u32)(seg * 2 + 2), c1 = (u32)(seg * 2 + 3);
         u32* tri = &idx[(size_t)seg * 6];
-        tri[0] = p0;
-        tri[1] = p1;
-        tri[2] = c0;
-        tri[3] = c1;
-        tri[4] = c0;
-        tri[5] = p1;
+        tri[0] = p0; tri[1] = p1; tri[2] = c0;
+        tri[3] = c1; tri[4] = c0; tri[5] = p1;
     }
 
     m_mesh.set_data(verts.data(), maxVerts, idx.data(), (int)idx.size());
     m_mesh.upload_dynamic();
+    m_scratchVerts.resize((size_t)maxVerts);
     m_gpu_ready = true;
     return true;
 }
 
-// ── build the camera-facing quad strip from the trail history ──
+// ── walk ring buffer and bake camera-facing quads ──
 void RibbonTrailNode::rebuild(const Vec3& camPos, const Vec3& camUp)
 {
     if (!m_gpu_ready && !ensure_gpu()) { m_indexCount = 0; return; }
 
-    int maxVerts = m_maxChains * m_maxElements * 2;
-    if (maxVerts < 1) { m_indexCount = 0; return; }
+    int maxVerts = m_maxChains * m_maxElementsPerChain * 2;
+    if (maxVerts < 2) { m_indexCount = 0; return; }
 
-    // build into local scratch (full allocation, padded with zeros)
-    static std::vector<MeshVertex> verts;
-    verts.assign((size_t)maxVerts, MeshVertex{});
-    int vi = 0;
+    // zero the scratch (std::fill is faster than assign-with-value for POD)
+    std::fill(m_scratchVerts.begin(), m_scratchVerts.end(), MeshVertex{});
 
-    for (Chain& ch : m_chains)
+    int vi = 0; // global vertex index across all chains
+
+    for (int ci = 0; ci < m_activeChains; ++ci)
     {
-        if (!ch.active) continue;
-        int n = (int)ch.elements.size();
-        if (n < 2) continue;
+        Chain& ch = m_chains[ci];
+        int n = ch.count;
+        if (!ch.active || n < 2) continue;
+
+        int base = ci * m_maxElementsPerChain;
+        int maxEl = m_maxElementsPerChain;
 
         for (int i = 0; i < n; ++i)
         {
-            const Element& e = ch.elements[i];
-            float t = e.age / m_trailLength;
-            if (t > 1.f) t = 1.f;
+            u16 ei = (u16)((ch.tail + i) % maxEl);
+            const Element& e = m_elements[base + ei];
 
-            Vec4 col = lerpV4(ch.startColor, ch.endColor, t);
-            float w = ch.startWidth + (ch.endWidth - ch.startWidth) * t;
+            // t=0 at tail (oldest/fading), t=1 at head (newest/brightest)
+            float t = (float)i / (float)(n - 1);
 
-            Vec3 toCam = camPos - e.position;
-            Vec3 viewDir = toCam;
-            float dlen = viewDir.length();
-            if (dlen < 1e-4f) viewDir = Vec3(0, 0, 1);
-            else viewDir = viewDir * (1.f / dlen);
+            Vec4 col = lerpV4(ch.endColor, ch.startColor, t);
+            float w = ch.endWidth + (ch.startWidth - ch.endWidth) * t;
 
+            Vec3 toCam(camPos.x - e.position.x, camPos.y - e.position.y,
+                       camPos.z - e.position.z);
+            float dlen = toCam.x * toCam.x + toCam.y * toCam.y + toCam.z * toCam.z;
+            Vec3 viewDir;
+            if (dlen < 1e-8f)
+                viewDir = Vec3(0, 0, 1);
+            else
+            {
+                float inv = 1.f / sqrtf(dlen);
+                viewDir = Vec3(toCam.x * inv, toCam.y * inv, toCam.z * inv);
+            }
+
+            // segment-direction-based quad orientation (smoother than camUp)
             Vec3 right, up;
             if (i < n - 1)
             {
-                Vec3 seg = (ch.elements[i + 1].position - e.position).normalized();
-                right = Vec3::Cross(viewDir, seg).normalized();
-                up = Vec3::Cross(right, viewDir).normalized();
+                u16 ni = (u16)((ch.tail + i + 1) % maxEl);
+                const Element& next = m_elements[base + ni];
+                float sx = next.position.x - e.position.x;
+                float sy = next.position.y - e.position.y;
+                float sz = next.position.z - e.position.z;
+                float sl = sx * sx + sy * sy + sz * sz;
+                if (sl > 1e-12f)
+                {
+                    sl = 1.f / sqrtf(sl);
+                    Vec3 seg(sx * sl, sy * sl, sz * sl);
+                    right = Vec3::Cross(viewDir, seg).normalized();
+                    up = Vec3::Cross(right, viewDir).normalized();
+                }
+                else { right = Vec3::Cross(viewDir, camUp).normalized(); up = camUp; }
             }
             else if (i > 0)
             {
-                Vec3 seg = (e.position - ch.elements[i - 1].position).normalized();
-                right = Vec3::Cross(viewDir, seg).normalized();
-                up = Vec3::Cross(right, viewDir).normalized();
+                u16 pi = (u16)((ch.tail + i - 1) % maxEl);
+                const Element& prev = m_elements[base + pi];
+                float sx = e.position.x - prev.position.x;
+                float sy = e.position.y - prev.position.y;
+                float sz = e.position.z - prev.position.z;
+                float sl = sx * sx + sy * sy + sz * sz;
+                if (sl > 1e-12f)
+                {
+                    sl = 1.f / sqrtf(sl);
+                    Vec3 seg(sx * sl, sy * sl, sz * sl);
+                    right = Vec3::Cross(viewDir, seg).normalized();
+                    up = Vec3::Cross(right, viewDir).normalized();
+                }
+                else { right = Vec3::Cross(viewDir, camUp).normalized(); up = camUp; }
             }
             else
             {
@@ -170,33 +290,33 @@ void RibbonTrailNode::rebuild(const Vec3& camPos, const Vec3& camUp)
                 up = camUp;
             }
 
-            // left vertex
-            verts[vi].position = e.position - right * w;
-            verts[vi].normal = up;
-            verts[vi].tangent = Vec4(col.x, col.y, col.z, col.w);
-            verts[vi].uv = Vec2(0.f, t);
+            // left
+            m_scratchVerts[vi].position =
+                Vec3(e.position.x - right.x * w, e.position.y - right.y * w,
+                     e.position.z - right.z * w);
+            m_scratchVerts[vi].normal = up;
+            m_scratchVerts[vi].tangent = Vec4(col.x, col.y, col.z, col.w);
+            m_scratchVerts[vi].uv = Vec2(0.f, t);
             ++vi;
 
-            // right vertex
-            verts[vi].position = e.position + right * w;
-            verts[vi].normal = up;
-            verts[vi].tangent = Vec4(col.x, col.y, col.z, col.w);
-            verts[vi].uv = Vec2(1.f, t);
+            // right
+            m_scratchVerts[vi].position =
+                Vec3(e.position.x + right.x * w, e.position.y + right.y * w,
+                     e.position.z + right.z * w);
+            m_scratchVerts[vi].normal = up;
+            m_scratchVerts[vi].tangent = Vec4(col.x, col.y, col.z, col.w);
+            m_scratchVerts[vi].uv = Vec2(1.f, t);
             ++vi;
 
-            if (vi >= maxVerts) break;
+            if (vi + 2 > maxVerts) break;
         }
-        if (vi >= maxVerts) break;
+        if (vi + 2 > maxVerts) break;
     }
 
-    // index count: each segment between two element pairs = 6 indices
-    // vi = number of vertices written; segments = vi/2 - 1 (since each
-    // element produces 2 verts, and each segment connects two element pairs)
     int segments = (vi / 2) - 1;
     if (segments < 0) segments = 0;
     m_indexCount = (u32)(segments * 6);
 
-    // upload the vertex data (glBufferSubData on the existing VBO)
-    m_mesh.update_vertices(verts.data(), (u32)verts.size());
+    m_mesh.update_vertices(m_scratchVerts.data(), (u32)m_scratchVerts.size());
     m_mesh.set_dynamic_index_count(m_indexCount);
 }

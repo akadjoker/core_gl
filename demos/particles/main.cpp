@@ -54,7 +54,7 @@ int main(int argc, char** argv)
         app.Destroy();
         return 1;
     }
-    renderer.set_light_dir(Vec3(0.45f, -0.7f, -0.35f));
+    renderer.set_light_dir(Vec3(0.f, 0.55f, 0.84f));
     renderer.set_sky_enabled(true);
 
     Scene scene;
@@ -151,7 +151,6 @@ int main(int argc, char** argv)
     trail->texture = particle;
     trail->blend = ParticleBlendMode::Additive;
     trail->setTrailLength(2.5f);
-    trail->setMinSegment(0.08f);
     trail->addChain(orbiter, Vec4(1.0f, 0.45f, 0.1f, 0.9f),
                     Vec4(0.8f, 0.2f, 0.05f, 0.0f), 0.40f, 0.04f);
     // ── scorch decals on the ground, normal-oriented (not billboarded) ──
@@ -181,6 +180,7 @@ int main(int argc, char** argv)
     PerfPrinter perf;
     int frame = 0;
     bool running = true;
+    float timeOfDay = getenv("COREGL_TOD") ? (float)atof(getenv("COREGL_TOD")) : 0.9f;
     while (running)
     {
         SDL_Event ev;
@@ -201,10 +201,17 @@ int main(int argc, char** argv)
         }
         if (!running) break;
 
+
         gl::u64 now = SDL_GetPerformanceCounter();
         float dt = (float)((double)(now - lastTicks) / (double)freq);
         lastTicks = now;
         if (dt > 0.1f) dt = 0.1f;
+        const Uint8* keys = SDL_GetKeyboardState(nullptr);
+
+        if (keys[SDL_SCANCODE_T]) timeOfDay += dt * 0.4f;
+        if (keys[SDL_SCANCODE_G]) timeOfDay -= dt * 0.4f;
+        Vec3 sunDir = Vec3(cosf(timeOfDay) * 0.8f, sinf(timeOfDay), 0.35f).normalized();
+        renderer.set_light_dir(sunDir * -1.f);
 
         fly.apply(camera, dt);
         scene.update(dt);

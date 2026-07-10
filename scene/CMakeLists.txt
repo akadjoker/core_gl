@@ -19,6 +19,9 @@ add_library(scene STATIC
     src/DecalSystemNode.cpp
     src/GrassSystemNode.cpp
     src/RibbonTrailNode.cpp
+    src/Tree.cpp
+    src/Collision.cpp
+    src/LensFlare.cpp
     src/ByteArray.cpp
     src/IO.cpp
     src/Filesystem.cpp

@@ -2,6 +2,7 @@
 
 #include "scene/Math.hpp"
 #include "scene/Scene.hpp"
+#include "scene/LensFlare.hpp"
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
@@ -110,6 +111,7 @@ private:
     static void collect_grass(Node* node, std::vector<GrassSystemNode*>& out);
     void draw_ribbontrails(const Mat4& viewProj);
     static void collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out);
+    void draw_lensflare(Camera3D& cam);
 
     // forward pass
     gl::Shader m_forward;
@@ -213,6 +215,9 @@ private:
 
     gl::Texture m_white; // 1x1 fallback so u_diffuse always samples something
     gl::Texture m_gray;  // 1x1 neutral detail map
+    gl::Texture m_flareTex; // lens flare atlas (flares.png)
+
+    LensFlare m_lensflare; // screen-space sun flare pass
 
     Vec3 m_clearColor = Vec3(0.5f, 0.65f, 0.8f);
     Vec3 m_lightDir = Vec3(0.5f, -1.0f, 0.3f);

@@ -11,31 +11,41 @@ class Texture;
 }
 
 // Ogre-style ribbon trail: each "chain" follows an emitter Node3D and
-// records a history of world positions with age. On rebuild (called by
-// the renderer once the camera basis is known), a strip of camera-facing
-// quads is baked into a dynamic Mesh with color riding in the tangent
-// slot — the same vertex layout as particles, so it reuses the particle
-// shader directly.  Drawn in the transparent pass with depth-write off.
+// records a history of world positions in a ring buffer. Elements are
+// evenly spaced (trailLength / maxElements) — when the emitter moves far
+// enough, a new element is "baked"; when the buffer is full, the tail
+// smoothly shrinks for a graceful fade-out instead of popping.
+//
+// On rebuild (called by the renderer once the camera basis is known), a
+// strip of camera-facing quads is baked into a dynamic Mesh with color
+// riding in the tangent slot — reusing the particle shader. Drawn in the
+// transparent pass with depth-write off.
 class RibbonTrailNode : public Node3D
 {
 public:
     static constexpr NodeType ClassType = NT_RIBBONTRAIL;
+    static constexpr u16   CHAIN_EMPTY = 0xFFFF;
 
     struct Element
     {
         Vec3 position{0, 0, 0};
-        float age = 0.f;
+        Vec4 color{1, 1, 1, 1};
+        float width = 0.5f;
     };
 
     struct Chain
     {
-        Node3D* emitter = nullptr;
-        std::vector<Element> elements;
-        Vec4 startColor{1, 1, 1, 1};
-        Vec4 endColor{1, 1, 1, 0};
-        float startWidth = 0.7f;
-        float endWidth = 0.05f;
-        bool active = true;
+        Node3D*       emitter = nullptr;
+        Vec4          startColor{1, 1, 1, 1};
+        Vec4          endColor{1, 1, 1, 0};
+        float         startWidth = 0.7f;
+        float         endWidth = 0.05f;
+        bool          active = true;
+        // ring buffer state
+        u16           head = CHAIN_EMPTY; // index of newest element
+        u16           tail = CHAIN_EMPTY; // index of oldest element
+        u16           count = 0;
+        Vec3          lastBakedPos{0, 0, 0};
     };
 
     explicit RibbonTrailNode(const std::string& name = "ribbon", int maxChains = 4,
@@ -51,16 +61,15 @@ public:
     void clearChains();
 
     // ── parameters ──
-    void setTrailLength(float seconds) { m_trailLength = seconds > 0.01f ? seconds : 0.01f; }
-    void setMinSegment(float v) { m_minSeg = v > 0.001f ? v : 0.001f; }
+    void setTrailLength(float seconds);
 
-    // ── renderer-side (game code never calls these) ──
-    bool ensure_gpu();                                // lazily builds the dynamic Mesh
+    // ── renderer-side ──
+    bool ensure_gpu();
     void rebuild(const Vec3& camPos, const Vec3& camUp);
     Mesh& quad_mesh() { return m_mesh; }
     u32   index_count() const { return m_indexCount; }
 
-    gl::Texture*      texture = nullptr; // non-owning (AssetManager)
+    gl::Texture*      texture = nullptr;
     ParticleBlendMode blend = ParticleBlendMode::Additive;
 
 protected:
@@ -68,13 +77,23 @@ protected:
     void _release_gpu() override { m_mesh.release_gpu(); }
 
 private:
-    std::vector<Chain> m_chains;
+    void resetTrail(Chain& ch);
+
+    static constexpr int MAX_CHAINS = 4;
+    Chain  m_chains[MAX_CHAINS];
+    int    m_activeChains = 0;
+
+    // ring buffer: one flat array shared by all chains
+    std::vector<Element> m_elements; // size = maxChains * maxElements
+    int m_maxChains;
+    int m_maxElementsPerChain;
+    float m_elemLength = 0.025f; // trailLength / maxElements
+    float m_trailLength = 1.2f;
+
     Mesh  m_mesh;
     bool  m_gpu_ready = false;
-    int   m_maxChains;
-    int   m_maxElements;
     u32   m_indexCount = 0;
-    float m_trailLength = 1.2f;
-    float m_minSeg = 0.05f;
-    float m_time = 0.f; // accumulated simulation time
+
+    // scratch reused across rebuild() calls
+    std::vector<MeshVertex> m_scratchVerts;
 };
