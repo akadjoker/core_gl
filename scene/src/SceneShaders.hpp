@@ -865,6 +865,52 @@ void main()
 }
 )";
 
+// ── grass: wind sway in the vertex stage (top of the blade swings, base
+// stays planted — h=1-uv.y so uv.y=0 is the tip), alpha-cutout in the
+// fragment stage (discard, no blend/sort needed since it's binary visible-
+// or-not). Ported from tmp/core/GrassSystem's foliage shader. ──
+static const char* kGrassVS = R"(
+layout(location = 0) in vec3 a_pos;
+layout(location = 2) in vec4 a_colorAsTangent;
+layout(location = 3) in vec2 a_uv;
+uniform mat4 u_viewProj;
+uniform float u_time;
+uniform vec3 u_windDir;
+uniform float u_windStrength;
+uniform float u_windSpeed;
+out vec2 v_uv;
+out vec4 v_color;
+void main()
+{
+    v_uv = a_uv;
+    v_color = a_colorAsTangent;
+    float h = 1.0 - a_uv.y; // tip = 1, base = 0
+    float phase = a_pos.x * 0.15 + a_pos.z * 0.15;
+    float s = sin(u_time * u_windSpeed + phase);
+    vec3 p = a_pos + u_windDir * (s * u_windStrength * h * h); // h^2: only the tip sways
+    gl_Position = u_viewProj * vec4(p, 1.0);
+}
+)";
+
+static const char* kGrassFS = R"(
+in vec2 v_uv;
+in vec4 v_color;
+out vec4 OutColor;
+uniform sampler2D u_tex;
+uniform float u_cutout;
+uniform vec3 u_lightDir;
+uniform vec3 u_lightColor;
+uniform float u_ambient;
+void main()
+{
+    vec4 t = texture(u_tex, v_uv) * v_color;
+    if (t.a < u_cutout) discard;
+    float ndl = max(dot(vec3(0.0, 1.0, 0.0), -normalize(u_lightDir)), 0.0);
+    vec3 c = t.rgb * (u_ambient + (ndl * 0.5 + 0.5) * u_lightColor * 0.7);
+    OutColor = vec4(c, 1.0);
+}
+)";
+
 // debug overlay: shows an extra view's texture in a corner rect
 static const char* kDebugFS = R"(
 in vec2 v_uv;

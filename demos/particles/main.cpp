@@ -13,6 +13,7 @@
 #include <scene/TerrainNode.hpp>
 #include <scene/ParticleSystemNode.hpp>
 #include <scene/DecalSystemNode.hpp>
+#include <scene/GrassSystemNode.hpp>
 #include <scene/AssetManager.hpp>
 #include <scene/Pixmap.hpp>
 
@@ -82,6 +83,15 @@ int main(int argc, char** argv)
     MeshInstance* ground = scene.root().create_child<MeshInstance>("ground");
     ground->set_mesh(groundMesh);
     ground->set_material(groundMat);
+
+    // ── grass patch: wind-swaying alpha-cutout blades, static once built ──
+    GrassSystemNode* grass = scene.root().create_child<GrassSystemNode>(
+        "grass", 2000, GrassSystemNode::GrassType::Cross);
+    grass->texture = dot; // soft round dot reused as a stand-in blade mask
+    grass->set_cutout(0.15f);
+    grass->set_wind(Vec3(1.f, 0.f, 0.3f), 0.15f, 1.8f);
+    grass->fillArea(Vec3(0.f, 0.f, 8.f), 40.f, 20.f, 800);
+    grass->build();
 
     // ── fire + smoke: cone emitter, additive glow, gravity+drag+turbulence ──
     ParticleSystemNode* fire = scene.root().create_child<ParticleSystemNode>("fire", 400);

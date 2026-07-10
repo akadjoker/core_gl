@@ -3,6 +3,7 @@
 #include "scene/LightNode.hpp"
 #include "scene/Material.hpp"
 #include "scene/DecalSystemNode.hpp"
+#include "scene/GrassSystemNode.hpp"
 #include "scene/OceanNode.hpp"
 #include "scene/ParticleSystemNode.hpp"
 #include "scene/WaterNode.hpp"
@@ -186,6 +187,13 @@ bool SceneRenderer::init()
     m_particle.Bind();
     m_particle.SetInt("u_tex", 0);
 
+    if (!loadStage(m_grass, gl::PipelineStage::VERTEX, kGrassVS) ||
+        !loadStage(m_grass, gl::PipelineStage::FRAGMENT, kGrassFS) || !m_grass.Link())
+        return false;
+    m_locGViewProj = m_grass.GetLocation("u_viewProj");
+    m_grass.Bind();
+    m_grass.SetInt("u_tex", 0);
+
     // ocean pass is optional: a compile failure only disables OceanNodes
     m_ocean_ready = loadStage(m_oceanShader, gl::PipelineStage::VERTEX, kOceanVS) &&
                     loadStage(m_oceanShader, gl::PipelineStage::FRAGMENT, kOceanFS) &&
@@ -217,6 +225,7 @@ void SceneRenderer::release()
     m_oceanShader.Release();
     m_sky.Release();
     m_particle.Release();
+    m_grass.Release();
     m_tonemap.Release();
     m_godray.Release();
     m_hdrFbo.Release();
@@ -548,6 +557,48 @@ void SceneRenderer::collect_decals(Node* node, std::vector<DecalSystemNode*>& ou
         collect_decals(child, out);
 }
 
+void SceneRenderer::collect_grass(Node* node, std::vector<GrassSystemNode*>& out)
+{
+    GrassSystemNode* g = node->as<GrassSystemNode>();
+    if (g) out.push_back(g);
+    for (Node* child : node->get_children())
+        collect_grass(child, out);
+}
+
+// Alpha-cutout, not alpha-blend: depth test+write ON, no cull (blades are
+// single-sided planes meant to be seen from both faces), no blending or
+// sorting needed since a fragment is either fully there or fully gone.
+void SceneRenderer::draw_grass(const Mat4& viewProj)
+{
+    if (m_grassSystems.empty()) return;
+
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(true);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(false);
+
+    m_grass.Bind();
+    m_grass.SetMat4(m_locGViewProj, viewProj.x);
+
+    for (GrassSystemNode* g : m_grassSystems)
+    {
+        if (g->index_count() == 0) continue;
+        gl::Texture* tex = g->texture ? g->texture : &m_white;
+        tex->Bind(0);
+        m_grass.SetFloat("u_time", g->time());
+        m_grass.SetVec3("u_windDir", g->wind_dir().x, g->wind_dir().y, g->wind_dir().z);
+        m_grass.SetFloat("u_windStrength", g->wind_strength());
+        m_grass.SetFloat("u_windSpeed", g->wind_speed());
+        m_grass.SetFloat("u_cutout", g->cutout());
+        m_grass.SetVec3("u_lightDir", g->light_dir().x, g->light_dir().y, g->light_dir().z);
+        m_grass.SetVec3("u_lightColor", g->light_color().x, g->light_color().y,
+                        g->light_color().z);
+        m_grass.SetFloat("u_ambient", g->ambient());
+        g->mesh().vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, g->index_count());
+    }
+}
+
 // Billboards are baked in world space by each node's simulation step
 // (Scene::update -> Node3D::_update -> simulate); here we only need the
 // camera basis to orient them and a viewProj to draw. Blend mode is
@@ -856,6 +907,10 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     main_view.h = viewport_h;
     main_view.cam_pos = cameraPos;
     draw_view(scene, main_view);
+
+    m_grassSystems.clear();
+    collect_grass(&scene.root(), m_grassSystems);
+    if (!m_grassSystems.empty()) draw_grass(proj * view);
 
     // water surfaces draw last, depth-tested against the scene (they land
     // in whatever target the main view used)
