@@ -19,6 +19,7 @@ enum NodeType : unsigned short
     NT_SPOTLIGHT,
     NT_BEHAVIOR,
     NT_PARTICLESYSTEM,
+    NT_DECALSYSTEM,
     NT_WATER,
     NT_OCEAN,
     NT_TERRAIN,

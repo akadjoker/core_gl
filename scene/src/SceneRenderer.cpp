@@ -2,6 +2,7 @@
 #include "scene/Camera3D.hpp"
 #include "scene/LightNode.hpp"
 #include "scene/Material.hpp"
+#include "scene/DecalSystemNode.hpp"
 #include "scene/OceanNode.hpp"
 #include "scene/ParticleSystemNode.hpp"
 #include "scene/WaterNode.hpp"
@@ -539,6 +540,14 @@ void SceneRenderer::collect_particles(Node* node, std::vector<ParticleSystemNode
         collect_particles(child, out);
 }
 
+void SceneRenderer::collect_decals(Node* node, std::vector<DecalSystemNode*>& out)
+{
+    DecalSystemNode* d = node->as<DecalSystemNode>();
+    if (d) out.push_back(d);
+    for (Node* child : node->get_children())
+        collect_decals(child, out);
+}
+
 // Billboards are baked in world space by each node's simulation step
 // (Scene::update -> Node3D::_update -> simulate); here we only need the
 // camera basis to orient them and a viewProj to draw. Blend mode is
@@ -547,7 +556,7 @@ void SceneRenderer::collect_particles(Node* node, std::vector<ParticleSystemNode
 // behind opaque geometry correctly.
 void SceneRenderer::draw_particles(const Mat4& viewProj)
 {
-    if (m_particleSystems.empty()) return;
+    if (m_particleSystems.empty() && m_decalSystems.empty()) return;
 
     gl::Renderer::SetDepthWrite(false);
     gl::Renderer::SetCull(gl::CullMode::NONE);
@@ -569,6 +578,25 @@ void SceneRenderer::draw_particles(const Mat4& viewProj)
         ps->quad_mesh().vao().Bind();
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, (u32)ps->active_count() * 6u);
     }
+
+    // decals sit exactly on the surface they mark — a small offset keeps
+    // them from z-fighting with it (same technique the shadow pass uses
+    // for coplanar geometry)
+    if (!m_decalSystems.empty()) gl::Renderer::SetPolygonOffset(true, -1.f, -2.f);
+    for (DecalSystemNode* ds : m_decalSystems)
+    {
+        if (ds->active_count() <= 0) continue;
+        if (ds->blend == ParticleBlendMode::Additive)
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE);
+        else
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                          gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+        gl::Texture* tex = ds->texture ? ds->texture : &m_white;
+        tex->Bind(0);
+        ds->quad_mesh().vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, (u32)ds->active_count() * 6u);
+    }
+    if (!m_decalSystems.empty()) gl::Renderer::SetPolygonOffset(false);
 
     gl::Renderer::SetBlend(false);
     gl::Renderer::SetDepthWrite(true);
@@ -838,7 +866,9 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     // everything opaque/water already in this target
     m_particleSystems.clear();
     collect_particles(&scene.root(), m_particleSystems);
-    if (!m_particleSystems.empty())
+    m_decalSystems.clear();
+    collect_decals(&scene.root(), m_decalSystems);
+    if (!m_particleSystems.empty() || !m_decalSystems.empty())
     {
         Vec3 camRight = Mat4(camera->get_global_rotation()) * Vec3(1.f, 0.f, 0.f);
         Vec3 camUp = Mat4(camera->get_global_rotation()) * Vec3(0.f, 1.f, 0.f);

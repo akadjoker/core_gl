@@ -15,6 +15,7 @@ class Camera3D;
 class WaterNode;
 class LightNode;
 class ParticleSystemNode;
+class DecalSystemNode;
 
 // Draws a Scene. This is the engine-side boundary: game code builds the node
 // tree and calls render() — it never touches coregl directly.
@@ -102,6 +103,7 @@ private:
     static void collect_water(Node* node, std::vector<WaterNode*>& out);
     void draw_particles(const Mat4& viewProj);
     static void collect_particles(Node* node, std::vector<ParticleSystemNode*>& out);
+    static void collect_decals(Node* node, std::vector<DecalSystemNode*>& out);
 
     // forward pass
     gl::Shader m_forward;
@@ -175,6 +177,7 @@ private:
     gl::Shader m_particle;
     gl::i32 m_locPViewProj = -1;
     std::vector<ParticleSystemNode*> m_particleSystems; // reused across frames
+    std::vector<DecalSystemNode*> m_decalSystems;       // reused across frames
 
     // procedural sky pass
     gl::Shader m_sky;

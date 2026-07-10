@@ -12,6 +12,7 @@
 #include <scene/Material.hpp>
 #include <scene/TerrainNode.hpp>
 #include <scene/ParticleSystemNode.hpp>
+#include <scene/DecalSystemNode.hpp>
 #include <scene/AssetManager.hpp>
 #include <scene/Pixmap.hpp>
 
@@ -126,6 +127,18 @@ int main(int argc, char** argv)
         ->setLifetime(2.5f, 3.5f)
         ->setSize(Vec2(0.8f, 0.8f), Vec2(3.5f, 3.5f))
         ->setColor(Vec4(0.6f, 0.6f, 0.6f, 0.35f), Vec4(0.6f, 0.6f, 0.6f, 0.0f));
+
+    // ── scorch decals on the ground, normal-oriented (not billboarded) ──
+    DecalSystemNode* decals = scene.root().create_child<DecalSystemNode>("decals", 64);
+    decals->texture = dot;
+    decals->blend = ParticleBlendMode::Alpha;
+    decals->set_default_lifetime(-1.f); // permanent marks
+    for (int i = 0; i < 6; ++i)
+    {
+        float a = (float)i / 6.f * 6.28318f;
+        Vec3 pos(cosf(a) * 8.f, 0.02f, sinf(a) * 8.f - 15.f); // ring under the smoke puff
+        decals->add(pos, Vec3(0.f, 1.f, 0.f), Vec2(2.5f, 2.5f), Vec4(0.05f, 0.05f, 0.05f, 0.8f));
+    }
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
     camera->set_perspective(55.f, 0.1f, 400.f);

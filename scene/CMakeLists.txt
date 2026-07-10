@@ -16,6 +16,7 @@ add_library(scene STATIC
     src/LightNode.cpp
     src/OceanNode.cpp
     src/ParticleSystemNode.cpp
+    src/DecalSystemNode.cpp
     src/ByteArray.cpp
     src/IO.cpp
     src/Filesystem.cpp
