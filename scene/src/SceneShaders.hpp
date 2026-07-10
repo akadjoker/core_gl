@@ -517,7 +517,6 @@ void main()
 }
 )";
 
-
 // ── ocean surface (from assets/shaders/water.ps|.fs): four Gerstner
 // waves displace a dense grid in the vertex stage; the fragment stage
 // perturbs the reflection/refraction views with a bump map and layers
@@ -667,6 +666,7 @@ uniform float u_foamRange;      // Distância da borda (substitui foamEdgeDistan
 uniform float u_foamScale;      // Escala da textura
 uniform float u_foamSpeed;      // Velocidade da animação
 uniform float u_foamIntensity;  // Intensidade geral (0-1)
+uniform float u_shoreFade;      // coregl: soft edge (world units), like the waterplane
 
 const float foamCutoff = 0.5;   
 
@@ -762,7 +762,68 @@ void main()
    finalColor.rgb = mix(finalColor.rgb, foamColor, foamFactor);
     
     
+    // coregl: the surface alpha-fades where it meets the terrain, exactly
+    // like the waterplane — no hard-colored contact line
+    finalColor.a = clamp(waterDepth / u_shoreFade, 0.0, 1.0);
     FragColor = finalColor;
+}
+)";
+
+// ── procedural sky: drawn after the opaque pass at depth 1.0 (only where
+// nothing else rendered). Zenith/horizon gradient, sun disc + halo and a
+// dusk tint, all driven by the sun direction — animate the light over time
+// and the sky follows. ──
+static const char* kSkyVS = R"(
+out vec2 v_uv;
+void main()
+{
+    // one triangle covering the screen, pinned to the far plane
+    vec2 corner = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
+    v_uv = corner;
+    gl_Position = vec4(corner * 2.0 - 1.0, 1.0, 1.0);
+}
+)";
+
+static const char* kSkyFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform mat4 u_invViewProj;
+uniform vec3 u_cameraPos;
+uniform vec3 u_sunDir; // direction TO the sun
+
+void main()
+{
+    vec2 ndc = v_uv * 2.0 - 1.0;
+    vec4 farPt = u_invViewProj * vec4(ndc, 1.0, 1.0);
+    vec3 dir = normalize(farPt.xyz / farPt.w - u_cameraPos);
+
+    float sunH = u_sunDir.y;                       // sun elevation
+    float day = smoothstep(-0.08, 0.25, sunH);     // 0 night .. 1 day
+    float dusk = 1.0 - smoothstep(0.08, 0.45, abs(sunH));
+
+    vec3 zenith = mix(vec3(0.02, 0.03, 0.08), vec3(0.22, 0.45, 0.85), day);
+    vec3 horizon = mix(vec3(0.05, 0.06, 0.10), vec3(0.72, 0.82, 0.92), day);
+
+    // dusk tint hugs the horizon around the sun's azimuth
+    vec3 flatDir = normalize(vec3(dir.x, 0.0, dir.z + 1e-4));
+    vec3 flatSun = normalize(vec3(u_sunDir.x, 0.0, u_sunDir.z + 1e-4));
+    float toSun = max(dot(flatDir, flatSun), 0.0);
+    horizon = mix(horizon, vec3(0.98, 0.48, 0.20), dusk * pow(toSun, 3.0) * 0.85);
+
+    float h = clamp(dir.y, 0.0, 1.0);
+    vec3 col = mix(horizon, zenith, pow(h, 0.6));
+    if (dir.y < 0.0) // haze below the horizon line
+        col = mix(horizon, horizon * 0.55, clamp(-dir.y * 3.0, 0.0, 1.0));
+
+    // sun disc + halo, fading out once it sets
+    float sunVis = smoothstep(-0.12, -0.02, sunH);
+    float d = dot(dir, u_sunDir);
+    float disc = smoothstep(0.9993, 0.9998, d);
+    float halo = pow(max(d, 0.0), 400.0) * 0.5 + pow(max(d, 0.0), 32.0) * 0.12;
+    vec3 sunColor = mix(vec3(1.0, 0.45, 0.15), vec3(1.0, 0.98, 0.92), smoothstep(0.0, 0.35, sunH));
+    col += sunColor * (disc * 1.2 + halo) * sunVis;
+
+    OutColor = vec4(col, 1.0);
 }
 )";
 

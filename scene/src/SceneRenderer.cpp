@@ -172,6 +172,10 @@ bool SceneRenderer::init()
     m_debug.Bind();
     m_debug.SetInt("u_tex", 0);
 
+    if (!loadStage(m_sky, gl::PipelineStage::VERTEX, kSkyVS) ||
+        !loadStage(m_sky, gl::PipelineStage::FRAGMENT, kSkyFS) || !m_sky.Link())
+        return false;
+
     // ocean pass is optional: a compile failure only disables OceanNodes
     m_ocean_ready = loadStage(m_oceanShader, gl::PipelineStage::VERTEX, kOceanVS) &&
                     loadStage(m_oceanShader, gl::PipelineStage::FRAGMENT, kOceanFS) &&
@@ -199,6 +203,7 @@ void SceneRenderer::release()
     m_forward.Release();
     m_water.Release();
     m_oceanShader.Release();
+    m_sky.Release();
     m_debug.Release();
     m_depth.Release();
     m_pointDepth.Release();
@@ -500,6 +505,25 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
                                   item.first_index);
     }
+
+    if (m_sky_enabled)
+    {
+        // background: fills every pixel the opaque pass left at depth 1.0.
+        // The sky shader writes no clip distance, so the hardware plane
+        // must be off while it draws.
+        gl::Renderer::SetClipDistance(0, false);
+        gl::Renderer::SetDepthWrite(false);
+        gl::Renderer::SetDepthFunction(gl::DepthFunction::LEQUAL);
+        gl::Renderer::SetCull(gl::CullMode::NONE);
+        m_sky.Bind();
+        Mat4 invViewProj = Mat4::Inverse(vp);
+        m_sky.SetMat4("u_invViewProj", invViewProj.x);
+        m_sky.SetVec3("u_cameraPos", v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
+        m_sky.SetVec3("u_sunDir", -m_lightDir.x, -m_lightDir.y, -m_lightDir.z);
+        gl::Renderer::DrawFullscreenTriangle();
+        gl::Renderer::SetDepthFunction(gl::DepthFunction::LESS);
+        gl::Renderer::SetDepthWrite(true);
+    }
 }
 
 // The ocean shader (assets/shaders/water.*) drives its own uniforms: the
@@ -531,6 +555,7 @@ void SceneRenderer::draw_ocean_surface(OceanNode* o, const Mat4& view, const Mat
     m_oceanShader.SetFloat("u_foamScale", o->foam_scale);
     m_oceanShader.SetFloat("u_foamSpeed", o->foam_speed);
     m_oceanShader.SetFloat("u_foamIntensity", o->foam_intensity);
+    m_oceanShader.SetFloat("u_shoreFade", o->shore_fade);
 
     o->reflection_tex().Bind(0);
     o->refraction_tex().Bind(1);
@@ -559,8 +584,15 @@ void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, cons
         OceanNode* ocean = w->as<OceanNode>();
         if (ocean)
         {
-            // deep water: opaque, the shader discards above-surface pixels
-            if (m_ocean_ready) draw_ocean_surface(ocean, view, proj, cameraPos);
+            if (m_ocean_ready)
+            {
+                // the surface alpha-fades at the waterline (soft shoreline)
+                gl::Renderer::SetBlend(true);
+                gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                              gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+                draw_ocean_surface(ocean, view, proj, cameraPos);
+                gl::Renderer::SetBlend(false);
+            }
             m_water.Bind(); // back to the plain water shader for the rest
             continue;
         }

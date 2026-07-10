@@ -40,6 +40,7 @@ public:
     float depth_scale = 25.f; // his `mult`: depth normalization distance
 
     // ── foam ──
+    float shore_fade = 1.6f;     // soft-edge fade distance at the waterline
     float foam_range = 5.f;      // shoreline foam reach (world units)
     float foam_scale = 0.05f;    // foam texture tiling over world XZ
     float foam_speed = 0.04f;    // foam scroll

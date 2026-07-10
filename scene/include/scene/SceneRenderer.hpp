@@ -38,6 +38,11 @@ public:
     void set_clear_color(float r, float g, float b);
     void set_light_dir(const Vec3& dir); // direction the light travels
 
+    // procedural sky: gradient + sun disc derived from the light direction.
+    // Animate set_light_dir over time and dawn/day/dusk/night follow; the
+    // sky is drawn in every view, so water reflections show it too.
+    void set_sky_enabled(bool on) { m_sky_enabled = on; }
+
     // ── directional-light shadows (CSM) ──
     // Call once after init(). Splits the camera frustum into `cascades`
     // slices, each with its own depth map layer fitted tightly around it
@@ -152,6 +157,10 @@ private:
     gl::Shader m_debug;
     gl::i32 m_locDRect = -1;
     gl::i32 m_locDTargetSize = -1;
+
+    // procedural sky pass
+    gl::Shader m_sky;
+    bool m_sky_enabled = false;
 
     // ocean surface pass (Gerstner shader from the reference assets);
     // uniforms are set by name — the pass runs once per ocean per frame

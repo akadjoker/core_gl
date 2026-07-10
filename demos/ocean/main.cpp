@@ -162,8 +162,8 @@ int main(int argc, char** argv)
 
     DemoApp app;
     if (!app.Create("coregl - ocean")) return 1;
-    printf("controls: WASD move | Q/E down/up | left mouse look | LSHIFT fast | V debug views | "
-           "F10 gif\n");
+    printf("controls: WASD move | Q/E down/up | left mouse look | LSHIFT fast | T/G time of "
+           "day | V debug views | F10 gif\n");
 
     SceneRenderer renderer;
     if (!renderer.init())
@@ -172,8 +172,11 @@ int main(int argc, char** argv)
         app.Destroy();
         return 1;
     }
-    renderer.set_light_dir(Vec3(0.4f, -0.6f, -0.4f));
     renderer.set_clear_color(0.62f, 0.74f, 0.88f);
+    renderer.set_sky_enabled(true); // procedural sky follows the sun
+
+    // time of day drives the sun: T advances, G rewinds (COREGL_TOD sets it)
+    float timeOfDay = getenv("COREGL_TOD") ? (float)atof(getenv("COREGL_TOD")) : 0.9f;
 
     Scene scene;
     assets::AssetManager& assets = assets::AssetManager::instance();
@@ -234,7 +237,8 @@ int main(int argc, char** argv)
     scene.set_active_camera(camera);
     scene.ready();
 
-    float camYaw = 0.f, camPitch = -0.15f;
+    float camYaw = getenv("COREGL_YAW") ? (float)atof(getenv("COREGL_YAW")) : 0.f;
+    float camPitch = -0.15f;
     bool looking = false;
     bool debugViews = false;
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
@@ -291,6 +295,11 @@ int main(int argc, char** argv)
         if (keys[SDL_SCANCODE_D]) camera->strafe(speed * dt);
         if (keys[SDL_SCANCODE_Q]) camera->move_global(Vec3(0.f, -speed * dt, 0.f));
         if (keys[SDL_SCANCODE_E]) camera->move_global(Vec3(0.f, speed * dt, 0.f));
+
+        if (keys[SDL_SCANCODE_T]) timeOfDay += dt * 0.4f;
+        if (keys[SDL_SCANCODE_G]) timeOfDay -= dt * 0.4f;
+        Vec3 sunDir = Vec3(cosf(timeOfDay) * 0.8f, sinf(timeOfDay), 0.35f).normalized();
+        renderer.set_light_dir(sunDir * -1.f);
 
         scene.update(dt);
 
