@@ -9,6 +9,7 @@ add_library(scene STATIC
     src/SceneRenderer.cpp
     src/WaterNode.cpp
     src/LightNode.cpp
+    src/OceanNode.cpp
     src/ByteArray.cpp
     src/IO.cpp
     src/Filesystem.cpp

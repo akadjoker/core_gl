@@ -1,4 +1,5 @@
 #include "coregl/gl_shader.hpp"
+#include "coregl/gl_log.hpp"
 #include "gl_platform.hpp"
 #include "gl_state.hpp"
 #include <cstring>
@@ -97,6 +98,7 @@ bool Shader::LoadFromString(PipelineStage stage, const char* source)
     if (!ok)
     {
         glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+        Log::Error("shader compile failed: %s", log);
         glDeleteShader(shader);
         return false;
     }
@@ -139,6 +141,7 @@ bool Shader::Link()
     if (!ok)
     {
         glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        Log::Error("shader link failed: %s", log);
         glDeleteProgram(program);
         return false;
     }

@@ -59,6 +59,10 @@ protected:
     void _update(float dt) override { m_time += dt; }
     void _release_gpu() override { release_gpu(); } // Scene::release_gpu reaches here
 
+    // fills the surface geometry (ensure_gpu uploads it); the base builds a
+    // flat quad — OceanNode overrides with a dense displaceable grid
+    virtual void build_surface(Mesh& mesh);
+
 private:
     float m_half = 50.f;
     float m_time = 0.f;

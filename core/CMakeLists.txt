@@ -1,5 +1,6 @@
 add_library(coregl STATIC
     src/gl_renderer.cpp
+    src/gl_log.cpp
     src/gl_shader.cpp
     src/gl_buffer.cpp
     src/gl_vertex_array.cpp

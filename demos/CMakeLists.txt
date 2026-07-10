@@ -13,3 +13,4 @@ endfunction()
 
 coregl_demo(demo_water water/main.cpp)
 coregl_demo(demo_shadows shadows/main.cpp)
+coregl_demo(demo_ocean ocean/main.cpp)

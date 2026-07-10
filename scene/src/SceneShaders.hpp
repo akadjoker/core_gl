@@ -517,6 +517,255 @@ void main()
 }
 )";
 
+
+// ── ocean surface (from assets/shaders/water.ps|.fs): four Gerstner
+// waves displace a dense grid in the vertex stage; the fragment stage
+// perturbs the reflection/refraction views with a bump map and layers
+// shore/crest foam on top. Kept verbatim apart from the version/precision
+// lines (supplied by ShaderHeader) and the uv attribute location. ──
+static const char* kOceanVS = R"(
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 3) in vec2 aTexCoord; // coregl mesh layout: 2 = tangent, 3 = uv
+
+
+out vec4 ClipSpace;
+out vec2 TexCoord;
+out vec3 ToCameraVector;
+out vec3 WorldPos;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+uniform vec3 cameraPos;
+
+uniform float u_time;
+uniform float u_waveLength;
+uniform float u_windForce;
+uniform vec2  u_windDirection;
+uniform float u_waveHeight;
+uniform float u_waveSpeed;
+
+uniform int u_numWaves;
+uniform vec4 u_wave1; // (directionX, directionY, steepness, wavelength)
+uniform vec4 u_wave2;
+uniform vec4 u_wave3;
+uniform vec4 u_wave4;
+
+out vec2 v_bumpMapTexCoord;
+out vec2 v_mapTexCoord;
+out vec3 v_normal;
+
+
+
+const float PI = 3.14159265359;
+
+ 
+vec3 GerstnerWave(vec2 position, vec2 direction, float steepness, float wavelength, float time)
+{
+    float k = 2.0 * PI / wavelength; // Wave number
+    float c = sqrt(9.8 / k); // Wave speed (física real!)
+    vec2 d = normalize(direction);
+    float f = k * (dot(d, position) - c * time);
+    float a = steepness / k;
+    
+    // Deslocamento da onda
+    return vec3(
+        d.x * a * cos(f),           // X displacement
+        a * sin(f),                 // Y displacement (altura)
+        d.y * a * cos(f)            // Z displacement
+    );
+}
+
+ 
+vec3 GerstnerWaveNormal(vec2 position, vec2 direction, float steepness, float wavelength, float time)
+{
+    float k = 2.0 * PI / wavelength;
+    float c = sqrt(9.8 / k);
+    vec2 d = normalize(direction);
+    float f = k * (dot(d, position) - c * time);
+    float a = steepness / k;
+    
+    // Derivadas para calcular normal
+    float dx = -d.x * d.x * steepness * sin(f);
+    float dy = steepness * cos(f);
+    float dz = -d.x * d.y * steepness * sin(f);
+    
+    return vec3(-dx, 1.0, -dz);
+}
+
+ 
+
+    
+void main() 
+{
+    vec3 pos = aPos;
+    vec3 normal = aNormal;
+
+     vec3 waveOffset = vec3(0.0);
+    vec3 waveNormal = vec3(0.0, 1.0, 0.0);
+    
+    // Onda 1
+    waveOffset += GerstnerWave(pos.xz, u_wave1.xy, u_wave1.z, u_wave1.w, u_time);
+    waveNormal += GerstnerWaveNormal(pos.xz, u_wave1.xy, u_wave1.z, u_wave1.w, u_time);
+    
+    // Onda 2
+    waveOffset += GerstnerWave(pos.xz, u_wave2.xy, u_wave2.z, u_wave2.w, u_time);
+    waveNormal += GerstnerWaveNormal(pos.xz, u_wave2.xy, u_wave2.z, u_wave2.w, u_time);
+    
+    // Onda 3
+    waveOffset += GerstnerWave(pos.xz, u_wave3.xy, u_wave3.z, u_wave3.w, u_time);
+    waveNormal += GerstnerWaveNormal(pos.xz, u_wave3.xy, u_wave3.z, u_wave3.w, u_time);
+    
+    // Onda 4
+    waveOffset += GerstnerWave(pos.xz, u_wave4.xy, u_wave4.z, u_wave4.w, u_time);
+    waveNormal += GerstnerWaveNormal(pos.xz, u_wave4.xy, u_wave4.z, u_wave4.w, u_time);
+    
+    // Aplicar offset
+    pos += waveOffset * u_waveHeight;
+    normal = normalize(waveNormal);
+
+
+    vec4 worldPos = model * vec4(pos, 1.0);
+    WorldPos = worldPos.xyz;
+    ClipSpace = projection * view * worldPos;
+    gl_Position = ClipSpace;
+    TexCoord = aTexCoord;
+    ToCameraVector = cameraPos - worldPos.xyz;
+    v_normal = normal;
+
+    v_bumpMapTexCoord = aTexCoord / u_waveLength + u_time * u_windForce * u_windDirection;
+
+}
+)";
+
+static const char* kOceanFS = R"(
+out vec4 FragColor;
+
+in vec4 ClipSpace;
+in vec2 TexCoord;
+in vec3 ToCameraVector;
+in vec3 WorldPos;
+in vec3 v_normal;
+in vec2 v_bumpMapTexCoord;
+
+uniform sampler2D reflectionTexture;
+uniform sampler2D refractionTexture;
+uniform sampler2D refractionDepth;
+uniform sampler2D waterBump;
+uniform sampler2D foamTexture;
+
+uniform vec3 u_cameraPosition;
+uniform float u_waveHeight;
+uniform vec4 u_waterColor;
+uniform float u_colorBlendFactor;
+uniform float u_time;
+uniform float mult;
+
+ 
+uniform float u_foamRange;      // Distância da borda (substitui foamEdgeDistance)
+uniform float u_foamScale;      // Escala da textura
+uniform float u_foamSpeed;      // Velocidade da animação
+uniform float u_foamIntensity;  // Intensidade geral (0-1)
+
+const float foamCutoff = 0.5;   
+
+void main() 
+{
+
+    float distToCamera = length(u_cameraPosition - WorldPos);
+    float lodFactor = smoothstep(50.0, 100.0, distToCamera);
+
+
+    // Bump distortion
+    vec4 bumpColor = texture(waterBump, v_bumpMapTexCoord);
+    vec2 perturbation = u_waveHeight * (bumpColor.rg - 0.5);
+    perturbation *= (1.0 - lodFactor * 0.5);
+    
+    // NDC coordinates
+    vec2 ndc = (ClipSpace.xy / ClipSpace.w) * 0.5 + 0.5;
+    vec2 reflectTexCoords = vec2(ndc.x, 1.0 - ndc.y);
+    vec2 refractTexCoords = vec2(ndc.x, ndc.y);
+    
+    // Depth calculation
+    float near = 0.1;
+    float far = 1000.0;
+    
+    float depth = texture(refractionDepth, refractTexCoords).r;
+    float floorDistance = 2.0 * near * far / (far + near - (2.0 * depth - 1.0) * (far - near));
+    
+    depth = gl_FragCoord.z;
+    float waterDistance = 2.0 * near * far / (far + near - (2.0 * depth - 1.0) * (far - near));
+    float waterDepth = floorDistance - waterDistance;
+    if (waterDepth < 0.0) 
+    {
+         discard;
+         return;
+    }
+    float normalizedDepth = clamp(waterDepth / mult, 0.0, 1.0);
+
+
+
+
+ 
+    
+    // Apply distortion
+    reflectTexCoords = clamp(reflectTexCoords + perturbation, 0.001, 0.999);
+    refractTexCoords = clamp(refractTexCoords + perturbation, 0.001, 0.999);
+    
+    vec4 reflectColor = texture(reflectionTexture, reflectTexCoords);
+    vec4 refractColor = texture(refractionTexture, refractTexCoords);
+    
+    // Fresnel
+    vec3 eyeVector = normalize(u_cameraPosition - WorldPos);
+    vec3 upVector = vec3(0.0, 1.0, 0.0);
+    float fresnelTerm = max(dot(eyeVector, upVector), 0.0);
+    
+    vec4 combinedColor = refractColor * fresnelTerm + reflectColor * (1.0 - fresnelTerm);
+    vec4 finalColor = u_colorBlendFactor * u_waterColor + (1.0 - u_colorBlendFactor) * combinedColor;
+
+ 
+        
+    
+    
+    // === FOAM SYSTEM ===
+    
+    // 1. Edge foam (shore/shallow water)
+    float edgeFoam = smoothstep(u_foamRange, 0.0, waterDepth);
+    edgeFoam = pow(edgeFoam, 2.0);
+    
+    // 2. Foam texture com animação (2 camadas para mais detalhe)
+    vec2 foamUV1 = WorldPos.xz * u_foamScale + vec2(u_time * u_foamSpeed, u_time * u_foamSpeed * 0.6);
+    vec2 foamUV2 = WorldPos.xz * u_foamScale * 0.7 - vec2(u_time * u_foamSpeed * 0.8, u_time * u_foamSpeed);
+    
+    float foamPattern1 = texture(foamTexture, foamUV1).r;
+    float foamPattern2 = texture(foamTexture, foamUV2).r;
+    float foamPattern = (foamPattern1 + foamPattern2) * 0.5;
+    
+    // 3. Wave crest foam (baseado na normal)
+    float waveHeight = 1.0 - v_normal.y;
+    float crestFoam = smoothstep(0.4, 0.8, waveHeight) * 0.5;
+    
+    // 4. Combinar todos os tipos de foam
+    float foamFactor = max(edgeFoam, crestFoam);
+    foamFactor = foamFactor * smoothstep(foamCutoff - 0.1, foamCutoff + 0.1, foamPattern);
+    foamFactor *= u_foamIntensity;   
+
+    foamFactor *= (1.0 - lodFactor * 0.7);
+
+    float foamDistanceFade = 1.0 - smoothstep(2.0, 50.0, distToCamera);
+    foamFactor *= foamDistanceFade;
+    
+    // Cor do foam
+    vec3 foamColor = vec3(0.95, 0.98, 1.0);
+    
+   finalColor.rgb = mix(finalColor.rgb, foamColor, foamFactor);
+    
+    
+    FragColor = finalColor;
+}
+)";
+
 // debug overlay: shows an extra view's texture in a corner rect
 static const char* kDebugFS = R"(
 in vec2 v_uv;

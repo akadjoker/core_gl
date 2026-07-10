@@ -2,6 +2,7 @@
 #include "scene/Camera3D.hpp"
 #include "scene/LightNode.hpp"
 #include "scene/Material.hpp"
+#include "scene/OceanNode.hpp"
 #include "scene/WaterNode.hpp"
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_renderer.hpp>
@@ -171,6 +172,20 @@ bool SceneRenderer::init()
     m_debug.Bind();
     m_debug.SetInt("u_tex", 0);
 
+    // ocean pass is optional: a compile failure only disables OceanNodes
+    m_ocean_ready = loadStage(m_oceanShader, gl::PipelineStage::VERTEX, kOceanVS) &&
+                    loadStage(m_oceanShader, gl::PipelineStage::FRAGMENT, kOceanFS) &&
+                    m_oceanShader.Link();
+    if (m_ocean_ready)
+    {
+        m_oceanShader.Bind();
+        m_oceanShader.SetInt("reflectionTexture", 0);
+        m_oceanShader.SetInt("refractionTexture", 1);
+        m_oceanShader.SetInt("refractionDepth", 2);
+        m_oceanShader.SetInt("waterBump", 3);
+        m_oceanShader.SetInt("foamTexture", 4);
+    }
+
     const gl::u8 white[4] = {255, 255, 255, 255};
     m_white.Load2D(white, 1, 1, gl::TextureFormat::RGBA8);
 
@@ -183,6 +198,7 @@ void SceneRenderer::release()
 {
     m_forward.Release();
     m_water.Release();
+    m_oceanShader.Release();
     m_debug.Release();
     m_depth.Release();
     m_pointDepth.Release();
@@ -486,22 +502,73 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     }
 }
 
-void SceneRenderer::draw_water_surfaces(const Mat4& viewProj, const Vec3& cameraPos, float camNear,
-                                        float camFar)
+// The ocean shader (assets/shaders/water.*) drives its own uniforms: the
+// grid is displaced by the Gerstner waves, the fragment pass reads the same
+// reflection/refraction targets plus bump and foam textures.
+void SceneRenderer::draw_ocean_surface(OceanNode* o, const Mat4& view, const Mat4& proj,
+                                       const Vec3& cameraPos)
 {
+    m_oceanShader.Bind();
+    m_oceanShader.SetMat4("model", o->get_global_transform().x);
+    m_oceanShader.SetMat4("view", view.x);
+    m_oceanShader.SetMat4("projection", proj.x);
+    m_oceanShader.SetVec3("cameraPos", cameraPos.x, cameraPos.y, cameraPos.z);
+    m_oceanShader.SetVec3("u_cameraPosition", cameraPos.x, cameraPos.y, cameraPos.z);
+    m_oceanShader.SetFloat("u_time", o->time());
+    m_oceanShader.SetVec4("u_wave1", o->wave1.x, o->wave1.y, o->wave1.z, o->wave1.w);
+    m_oceanShader.SetVec4("u_wave2", o->wave2.x, o->wave2.y, o->wave2.z, o->wave2.w);
+    m_oceanShader.SetVec4("u_wave3", o->wave3.x, o->wave3.y, o->wave3.z, o->wave3.w);
+    m_oceanShader.SetVec4("u_wave4", o->wave4.x, o->wave4.y, o->wave4.z, o->wave4.w);
+    m_oceanShader.SetFloat("u_waveHeight", o->wave_height);
+    m_oceanShader.SetFloat("u_waveLength", o->bump_uv_scale);
+    m_oceanShader.SetFloat("u_windForce", o->wind_force);
+    m_oceanShader.SetVec2("u_windDirection", o->wind_dir.x, o->wind_dir.y);
+    m_oceanShader.SetVec4("u_waterColor", o->ocean_color.x, o->ocean_color.y, o->ocean_color.z,
+                          o->ocean_color.w);
+    m_oceanShader.SetFloat("u_colorBlendFactor", o->color_blend);
+    m_oceanShader.SetFloat("mult", o->depth_scale);
+    m_oceanShader.SetFloat("u_foamRange", o->foam_range);
+    m_oceanShader.SetFloat("u_foamScale", o->foam_scale);
+    m_oceanShader.SetFloat("u_foamSpeed", o->foam_speed);
+    m_oceanShader.SetFloat("u_foamIntensity", o->foam_intensity);
+
+    o->reflection_tex().Bind(0);
+    o->refraction_tex().Bind(1);
+    o->refraction_depth_tex().Bind(2);
+    if (o->bump) o->bump->Bind(3);
+    if (o->foam) o->foam->Bind(4);
+
+    o->quad().vao().Bind();
+    gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, o->quad().index_count());
+}
+
+void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, const Vec3& cameraPos,
+                                        float camNear, float camFar)
+{
+    Mat4 viewProj = proj * view;
     m_water.Bind();
     m_water.SetMat4(m_locWViewProj, viewProj.x);
     m_water.SetVec3(m_locWCameraPos, cameraPos.x, cameraPos.y, cameraPos.z);
     m_water.SetVec3(m_locWLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
     m_water.SetVec2(m_locWCamPlanes, camNear, camFar);
 
-    // the surface alpha-fades where it meets the terrain (soft shoreline)
-    gl::Renderer::SetBlend(true);
-    gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
-
     for (WaterNode* w : m_waters)
     {
         if (!w->quad().is_uploaded()) continue;
+
+        OceanNode* ocean = w->as<OceanNode>();
+        if (ocean)
+        {
+            // deep water: opaque, the shader discards above-surface pixels
+            if (m_ocean_ready) draw_ocean_surface(ocean, view, proj, cameraPos);
+            m_water.Bind(); // back to the plain water shader for the rest
+            continue;
+        }
+
+        // the surface alpha-fades where it meets the terrain (soft shoreline)
+        gl::Renderer::SetBlend(true);
+        gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                      gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
         w->reflection_tex().Bind(0);
         w->refraction_tex().Bind(1);
         w->refraction_depth_tex().Bind(2);
@@ -513,6 +580,7 @@ void SceneRenderer::draw_water_surfaces(const Mat4& viewProj, const Vec3& camera
         m_water.SetMat4(m_locWModel, w->get_global_transform().x);
         w->quad().vao().Bind();
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, w->quad().index_count());
+        gl::Renderer::SetBlend(false);
     }
     gl::Renderer::SetBlend(false);
 }
@@ -595,7 +663,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
 
     // water surfaces draw last, depth-tested against the scene
     if (!m_waters.empty())
-        draw_water_surfaces(proj * view, cameraPos, camera->get_near(), camera->get_far());
+        draw_water_surfaces(view, proj, cameraPos, camera->get_near(), camera->get_far());
 
     if (m_debug_views) draw_debug_views(viewport_w, viewport_h);
 }

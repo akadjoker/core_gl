@@ -59,6 +59,9 @@ struct DemoApp
         printf("GL version : %s\n", gl::Renderer::GetVersionString());
         printf("GL renderer: %s\n", gl::Renderer::GetRendererString());
 
+        // demos always report GL errors through gl::Log, even in release
+        gl::Renderer::EnableDebugOutput();
+
         if (getenv("COREGL_RECORD"))
         {
             int dw, dh;

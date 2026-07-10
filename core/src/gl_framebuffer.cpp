@@ -1,4 +1,5 @@
 #include "coregl/gl_framebuffer.hpp"
+#include "coregl/gl_log.hpp"
 #include "coregl/gl_texture.hpp"
 #include "coregl/gl_renderbuffer.hpp"
 #include "gl_platform.hpp"
@@ -139,7 +140,10 @@ void FrameBuffer::SetDrawBuffers()
 bool FrameBuffer::IsComplete()
 {
     state::BindFBO(id);
-    return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+        Log::Error("framebuffer %u incomplete: 0x%04x", id, status);
+    return status == GL_FRAMEBUFFER_COMPLETE;
 }
 
 } // namespace gl

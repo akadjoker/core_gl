@@ -44,6 +44,14 @@ public:
     static const char* GetVersionString();
     static const char* GetRendererString();
 
+    // Routes the driver's own error/performance messages (wrong enums,
+    // incomplete objects, slow paths) into gl::Log as they happen — no
+    // glGetError polling. Enabled automatically by Init() in debug builds;
+    // call it yourself to turn it on in release. Desktop GL 4.3+; no-op on
+    // ES. `synchronous` makes the callback fire inside the offending GL
+    // call (a breakpoint in the logger lands on the culprit), at some cost.
+    static void EnableDebugOutput(bool synchronous = false);
+
     // Viewport
     static void Viewport(int x, int y, int w, int h);
 

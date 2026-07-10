@@ -20,6 +20,7 @@ enum NodeType : unsigned short
     NT_BEHAVIOR,
     NT_PARTICLESYSTEM,
     NT_WATER,
+    NT_OCEAN,
     NT_COUNT
 };
 

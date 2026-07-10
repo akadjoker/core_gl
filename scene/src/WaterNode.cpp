@@ -33,7 +33,17 @@ bool WaterNode::ensure_gpu(int reflection_w, int reflection_h)
     m_refrFbo.SetDrawBuffers();
     if (!m_refrFbo.IsComplete()) return false;
 
-    // the surface quad, on XZ at local y=0 (world height comes from the node)
+    // surface geometry on XZ at local y=0 (world height comes from the
+    // node); subclasses provide their own — an ocean needs a dense grid
+    build_surface(m_quad);
+    m_quad.upload();
+
+    m_gpu_ready = true;
+    return true;
+}
+
+void WaterNode::build_surface(Mesh& mesh)
+{
     const float h = m_half;
     MeshVertex verts[4];
     const float pos[4][3] = {{-h, 0, -h}, {h, 0, -h}, {h, 0, h}, {-h, 0, h}};
@@ -45,11 +55,7 @@ bool WaterNode::ensure_gpu(int reflection_w, int reflection_h)
         verts[i].uv = Vec2((float)(i == 1 || i == 2), (float)(i >= 2));
     }
     const u16 idx[6] = {0, 2, 1, 0, 3, 2}; // CCW seen from above
-    m_quad.set_data(verts, 4, idx, 6);
-    m_quad.upload();
-
-    m_gpu_ready = true;
-    return true;
+    mesh.set_data(verts, 4, idx, 6);
 }
 
 void WaterNode::release_gpu()

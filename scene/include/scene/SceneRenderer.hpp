@@ -75,12 +75,14 @@ private:
     };
 
     void draw_view(Scene& scene, const RenderView& v);
+    void draw_ocean_surface(class OceanNode* ocean, const Mat4& view, const Mat4& proj,
+                            const Vec3& cameraPos);
     void draw_shadow_views(Scene& scene, Camera3D* camera);
     void draw_light_shadows(Scene& scene); // point cubemaps + spot maps
     void set_light_uniforms();
     static void collect_lights(Node* node, std::vector<LightNode*>& out);
-    void draw_water_surfaces(const Mat4& viewProj, const Vec3& cameraPos, float camNear,
-                             float camFar);
+    void draw_water_surfaces(const Mat4& view, const Mat4& proj, const Vec3& cameraPos,
+                             float camNear, float camFar);
     void draw_debug_views(int viewport_w, int viewport_h);
     static void collect_water(Node* node, std::vector<WaterNode*>& out);
 
@@ -150,6 +152,11 @@ private:
     gl::Shader m_debug;
     gl::i32 m_locDRect = -1;
     gl::i32 m_locDTargetSize = -1;
+
+    // ocean surface pass (Gerstner shader from the reference assets);
+    // uniforms are set by name — the pass runs once per ocean per frame
+    gl::Shader m_oceanShader;
+    bool m_ocean_ready = false;
 
     gl::Texture m_white; // 1x1 fallback so u_diffuse always samples something
 

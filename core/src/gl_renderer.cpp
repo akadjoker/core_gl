@@ -1,5 +1,6 @@
 #include "coregl/gl_renderer.hpp"
 #include "coregl/gl_framebuffer.hpp"
+#include "coregl/gl_log.hpp"
 #include "gl_platform.hpp"
 #include "gl_state.hpp"
 #include <cstddef>
@@ -247,7 +248,50 @@ bool Renderer::Init(LoadProc proc)
     // seams on point-light shadows and reflection probes.
     glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 #endif
+
+#if !defined(NDEBUG)
+    // debug builds report every GL error through gl::Log automatically
+    EnableDebugOutput();
+#endif
     return true;
+}
+
+#if !defined(CORE_GL_ES)
+static void APIENTRY debugCallback(GLenum source, GLenum type, GLuint idNum, GLenum severity,
+                                   GLsizei length, const GLchar* message, const void* user)
+{
+    (void)source;
+    (void)idNum;
+    (void)length;
+    (void)user;
+    // driver chatter (buffer placement info etc.) is not worth a log line
+    if (severity == GL_DEBUG_SEVERITY_NOTIFICATION) return;
+
+    const char* what = (type == GL_DEBUG_TYPE_ERROR)                 ? "error"
+                       : (type == GL_DEBUG_TYPE_PERFORMANCE)         ? "performance"
+                       : (type == GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR) ? "deprecated"
+                       : (type == GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR)  ? "undefined behavior"
+                                                                     : "message";
+    if (severity == GL_DEBUG_SEVERITY_HIGH)
+        Log::Error("GL %s: %s", what, message);
+    else
+        Log::Warn("GL %s: %s", what, message);
+}
+#endif
+
+void Renderer::EnableDebugOutput(bool synchronous)
+{
+#if defined(CORE_GL_ES)
+    (void)synchronous; // needs KHR_debug on ES; not wired yet
+#else
+    if (s.major < 4 || (s.major == 4 && s.minor < 3)) return;
+    glEnable(GL_DEBUG_OUTPUT);
+    if (synchronous)
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    else
+        glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(debugCallback, nullptr);
+#endif
 }
 
 void Renderer::Shutdown()
