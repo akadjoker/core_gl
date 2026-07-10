@@ -21,6 +21,7 @@ enum NodeType : unsigned short
     NT_PARTICLESYSTEM,
     NT_WATER,
     NT_OCEAN,
+    NT_TERRAIN,
     NT_COUNT
 };
 

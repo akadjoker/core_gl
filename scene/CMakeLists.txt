@@ -5,6 +5,7 @@ add_library(scene STATIC
     src/Node3D.cpp
     src/Mesh.cpp
     src/MeshLoader.cpp
+    src/TerrainNode.cpp
     src/Camera3D.cpp
     src/Scene.cpp
     src/SceneRenderer.cpp

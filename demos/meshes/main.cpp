@@ -17,6 +17,7 @@
 #include <scene/Camera3D.hpp>
 #include <scene/Mesh.hpp>
 #include <scene/MeshLoader.hpp>
+#include <scene/TerrainNode.hpp>
 
 int main(int argc, char** argv)
 {
@@ -60,13 +61,17 @@ int main(int argc, char** argv)
         houseMats.push_back(m);
     }
 
-    // ── ground ──
-    Mesh* planeMesh = scene.create_mesh();
-    demoBuildPlane(*planeMesh, 90.f);
+    // ── ground: a real heightmap terrain (blocks -> per-surface culling) ──
+    std::vector<float> heights(256 * 256);
+    for (int z = 0; z < 256; ++z)
+        for (int x = 0; x < 256; ++x)
+            heights[z * 256 + x] = 0.5f + 0.28f * sinf(x * 0.045f) * cosf(z * 0.06f) +
+                                   0.18f * sinf(x * 0.11f + 1.7f) * sinf(z * 0.09f);
+    TerrainNode* terrain = scene.root().create_child<TerrainNode>("terrain");
+    terrain->build(heights.data(), 256, 180.f, 10.f, 180.f);
+    terrain->set_position(-90.f, -5.f, -90.f); // center it, mid-height at y~0
     Material* groundMat = scene.create_material(0.42f, 0.56f, 0.35f);
-    MeshInstance* ground = scene.root().create_child<MeshInstance>("ground");
-    ground->set_mesh(planeMesh);
-    ground->set_material(groundMat);
+    terrain->set_material(groundMat);
 
     // ── the village: many instances of the same loaded mesh ──
     gl::u32 rng = 77;
@@ -84,7 +89,9 @@ int main(int argc, char** argv)
         MeshInstance* house = scene.root().create_child<MeshInstance>("house");
         house->set_mesh(houseMesh);
         house->set_materials(houseMats);
-        house->set_position(x, 0.f, z);
+        // snap to the terrain via the CPU heightfield query
+        float y = terrain->height_at(x + 90.f, z + 90.f) - 5.f;
+        house->set_position(x, y - 0.1f, z);
         house->set_euler(Vec3(0.f, yaw, 0.f));
         house->set_scale(s);
     }
