@@ -173,7 +173,9 @@ int main(int argc, char** argv)
         return 1;
     }
     renderer.set_clear_color(0.62f, 0.74f, 0.88f);
-    renderer.set_sky_enabled(true); // procedural sky follows the sun
+    renderer.set_sky_enabled(true);          // procedural sky follows the sun
+    renderer.enable_shadows(4, 2048, 300.f); // island shadows + godray source
+    renderer.enable_post(true);              // HDR + filmic tonemap + godrays
 
     // time of day drives the sun: T advances, G rewinds (COREGL_TOD sets it)
     float timeOfDay = getenv("COREGL_TOD") ? (float)atof(getenv("COREGL_TOD")) : 0.9f;

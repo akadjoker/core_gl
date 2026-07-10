@@ -43,6 +43,15 @@ public:
     // sky is drawn in every view, so water reflections show it too.
     void set_sky_enabled(bool on) { m_sky_enabled = on; }
 
+    // ── post-processing ──
+    // The main view renders into an HDR target; a filmic tonemap brings it
+    // to the screen (strong lights roll off instead of clipping). With
+    // godrays on (needs enable_shadows), a volumetric pass marches the last
+    // shadow cascade and adds the sun's in-scattered light before the
+    // tonemap. Call after init().
+    bool enable_post(bool godrays = true);
+    void set_exposure(float e) { m_exposure = e; }
+
     // ── directional-light shadows (CSM) ──
     // Call once after init(). Splits the camera frustum into `cascades`
     // slices, each with its own depth map layer fitted tightly around it
@@ -161,6 +170,17 @@ private:
     // procedural sky pass
     gl::Shader m_sky;
     bool m_sky_enabled = false;
+
+    // post chain: HDR scene target -> (godrays) -> tonemap -> screen
+    bool ensure_post_targets(int w, int h);
+    gl::Shader m_tonemap;
+    gl::Shader m_godray;
+    gl::FrameBuffer m_hdrFbo, m_pingFbo;
+    gl::Texture m_hdrColor, m_hdrDepth, m_pingColor;
+    int m_postW = 0, m_postH = 0;
+    bool m_post_enabled = false;
+    bool m_godrays_enabled = false;
+    float m_exposure = 3.4f;
 
     // ocean surface pass (Gerstner shader from the reference assets);
     // uniforms are set by name — the pass runs once per ocean per frame

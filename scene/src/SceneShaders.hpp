@@ -467,7 +467,9 @@ float rayShadow(vec3 pos)
 {
     vec4 lp = u_lightMat * vec4(pos, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
-    if (p.x < 0.001 || p.x > 0.999 || p.y < 0.001 || p.y > 0.999) return 0.0;
+    // outside the cascade = open air = lit (0.0 here paints dark bands
+    // across the sky wherever the march leaves the map)
+    if (p.x < 0.001 || p.x > 0.999 || p.y < 0.001 || p.y > 0.999) return 1.0;
     float d = texture(u_shadowMap, vec3(p.xy, u_lastLayer)).r;
     return (p.z - 0.002) > d ? 0.0 : 1.0;
 }
@@ -517,7 +519,7 @@ void main()
 }
 )";
 
-// ── ocean surface (from assets/shaders/water.ps|.fs): four Gerstner
+// ── ocean surface   four Gerstner
 // waves displace a dense grid in the vertex stage; the fragment stage
 // perturbs the reflection/refraction views with a bump map and layers
 // shore/crest foam on top. Kept verbatim apart from the version/precision

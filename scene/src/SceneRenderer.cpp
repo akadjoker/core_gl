@@ -204,6 +204,15 @@ void SceneRenderer::release()
     m_water.Release();
     m_oceanShader.Release();
     m_sky.Release();
+    m_tonemap.Release();
+    m_godray.Release();
+    m_hdrFbo.Release();
+    m_pingFbo.Release();
+    m_hdrColor.Release();
+    m_hdrDepth.Release();
+    m_pingColor.Release();
+    m_postW = m_postH = 0;
+    m_post_enabled = false;
     m_debug.Release();
     m_depth.Release();
     m_pointDepth.Release();
@@ -235,6 +244,66 @@ bool SceneRenderer::enable_shadows(int cascades, int resolution, float distance)
     m_shadowSize = resolution;
     m_shadow_distance = distance;
     m_shadow_items.reserve(256);
+    return true;
+}
+
+bool SceneRenderer::enable_post(bool godrays)
+{
+    if (!m_ready) return false;
+
+    if (!m_tonemap.LoadFromString(gl::PipelineStage::VERTEX,
+                                  gl::Renderer::FullscreenTriangleShaderSource()) ||
+        !loadStage(m_tonemap, gl::PipelineStage::FRAGMENT, kTonemapFS) || !m_tonemap.Link())
+        return false;
+    m_tonemap.Bind();
+    m_tonemap.SetInt("u_hdr", 0);
+
+    if (godrays)
+    {
+        if (!m_godray.LoadFromString(gl::PipelineStage::VERTEX,
+                                     gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_godray, gl::PipelineStage::FRAGMENT, kGodrayFS) || !m_godray.Link())
+            return false;
+        m_godray.Bind();
+        m_godray.SetInt("u_hdr", 0);
+        m_godray.SetInt("u_depth", 1);
+        m_godray.SetInt("u_shadowMap", 2);
+    }
+
+    m_post_enabled = true;
+    m_godrays_enabled = godrays;
+    return true;
+}
+
+// (re)creates the HDR targets when the viewport size changes
+bool SceneRenderer::ensure_post_targets(int w, int h)
+{
+    if (m_postW == w && m_postH == h) return true;
+
+    m_hdrColor.Release();
+    m_hdrDepth.Release();
+    m_pingColor.Release();
+    m_hdrFbo.Release();
+    m_pingFbo.Release();
+
+    m_hdrColor.Load2D(nullptr, w, h, gl::TextureFormat::RGBA16F);
+    m_hdrColor.SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+    m_hdrColor.SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+    m_hdrDepth.LoadDepth(w, h, gl::TextureFormat::DEPTH24);
+    m_hdrFbo.AttachTexture(m_hdrColor, gl::Attachment::COLOR0);
+    m_hdrFbo.AttachTexture(m_hdrDepth, gl::Attachment::DEPTH);
+    m_hdrFbo.SetDrawBuffers();
+    if (!m_hdrFbo.IsComplete()) return false;
+
+    m_pingColor.Load2D(nullptr, w, h, gl::TextureFormat::RGBA16F);
+    m_pingColor.SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+    m_pingColor.SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+    m_pingFbo.AttachTexture(m_pingColor, gl::Attachment::COLOR0);
+    m_pingFbo.SetDrawBuffers();
+    if (!m_pingFbo.IsComplete()) return false;
+
+    m_postW = w;
+    m_postH = h;
     return true;
 }
 
@@ -684,18 +753,60 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
         draw_view(scene, refr);
     }
 
-    // ── main view ──
+    // ── main view (into the HDR target when post-processing is on) ──
+    bool post = m_post_enabled && ensure_post_targets(viewport_w, viewport_h);
     RenderView main_view;
     main_view.view = view;
     main_view.proj = proj;
+    main_view.target = post ? &m_hdrFbo : nullptr;
     main_view.w = viewport_w;
     main_view.h = viewport_h;
     main_view.cam_pos = cameraPos;
     draw_view(scene, main_view);
 
-    // water surfaces draw last, depth-tested against the scene
+    // water surfaces draw last, depth-tested against the scene (they land
+    // in whatever target the main view used)
     if (!m_waters.empty())
         draw_water_surfaces(view, proj, cameraPos, camera->get_near(), camera->get_far());
+
+    if (post)
+    {
+        gl::Renderer::SetDepthTest(false);
+        gl::Renderer::SetCull(gl::CullMode::NONE);
+
+        const gl::Texture* colorSrc = &m_hdrColor;
+        if (m_godrays_enabled && m_cascades > 0)
+        {
+            // volumetric sun: march the LAST cascade through the scene depth
+            m_pingFbo.Bind();
+            gl::Renderer::Viewport(0, 0, viewport_w, viewport_h);
+            m_godray.Bind();
+            m_hdrColor.Bind(0);
+            m_hdrDepth.Bind(1);
+            m_shadowTex.Bind(2);
+            const int last = m_cascades - 1;
+            m_godray.SetMat4("u_lightMat", m_cascadeMat[last].x);
+            m_godray.SetFloat("u_lastLayer", (float)last);
+            Mat4 invViewProj = Mat4::Inverse(proj * view);
+            m_godray.SetMat4("u_invViewProj", invViewProj.x);
+            m_godray.SetVec3("u_cameraPos", cameraPos.x, cameraPos.y, cameraPos.z);
+            m_godray.SetVec3("u_lightDir", m_lightDir.x, m_lightDir.y, m_lightDir.z);
+            m_godray.SetVec3("u_lightColor", 1.0f, 0.92f, 0.78f);
+            m_godray.SetVec4("u_params", 24.f, 1.4f, 1.10f, 900.f);
+            m_godray.SetFloat("u_asymmetry", 0.7f);
+            gl::Renderer::DrawFullscreenTriangle();
+            colorSrc = &m_pingColor;
+        }
+
+        // filmic tonemap to the screen
+        gl::Renderer::BindScreen();
+        gl::Renderer::Viewport(0, 0, viewport_w, viewport_h);
+        m_tonemap.Bind();
+        const_cast<gl::Texture*>(colorSrc)->Bind(0);
+        m_tonemap.SetFloat("u_exposure", m_exposure);
+        gl::Renderer::DrawFullscreenTriangle();
+        gl::Renderer::SetDepthTest(true);
+    }
 
     if (m_debug_views) draw_debug_views(viewport_w, viewport_h);
 }
