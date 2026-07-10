@@ -39,6 +39,8 @@ int main(int argc, char** argv)
     terrain->configure(6, 33, 64.f, 1024.f);
     Material* mat = scene.create_material();
     mat->diffuse = assets.loadTexture("ground", "assets/terrain/terrain-texture.jpg");
+    mat->detail = assets.loadTexture("detail", "assets/terrain/detailmap3.jpg");
+    mat->detail_scale = 60.f;
     terrain->set_material(mat);
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");

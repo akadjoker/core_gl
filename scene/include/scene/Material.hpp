@@ -19,6 +19,10 @@ public:
 
     Vec3 base_color = Vec3(1.f, 1.f, 1.f); // multiplied with the diffuse map
     gl::Texture* diffuse = nullptr;        // null = plain base_color
+    // detail map: tiled `detail_scale` times over the uv and multiplied in
+    // (mid-gray = neutral) — close-up texture for terrain
+    gl::Texture* detail = nullptr;
+    float detail_scale = 40.f;
 
     bool double_sided = false; // disables backface culling for this item
     bool unlit = false;        // skip lighting: output the flat color/texture

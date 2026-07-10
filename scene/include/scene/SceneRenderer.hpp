@@ -188,6 +188,7 @@ private:
     bool m_ocean_ready = false;
 
     gl::Texture m_white; // 1x1 fallback so u_diffuse always samples something
+    gl::Texture m_gray;  // 1x1 neutral detail map
 
     Vec3 m_clearColor = Vec3(0.5f, 0.65f, 0.8f);
     Vec3 m_lightDir = Vec3(0.5f, -1.0f, 0.3f);

@@ -45,10 +45,12 @@ int main(int argc, char** argv)
                 hs[(size_t)z * 256 + x] = 0.5f + 0.3f * sinf(x * 0.05f) * cosf(z * 0.055f);
         terrain->build(hs, 256, 0.12f);
     }
-    terrain->set_texture_scale(24.f);
+    terrain->set_texture_scale(1.f); // base texture covers the WHOLE terrain
     terrain->set_terrain_scale(Vec3(1000.f, 400.f, 1000.f));
     Material* mat = scene.create_material();
     mat->diffuse = assets.loadTexture("ground", "assets/terrain/terrain-texture.jpg");
+    mat->detail = assets.loadTexture("detail", "assets/terrain/detailmap3.jpg");
+    mat->detail_scale = 60.f;
     terrain->set_material(mat);
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
@@ -102,6 +104,11 @@ int main(int argc, char** argv)
         app.DrawableSize(&w, &h);
         renderer.render(scene, w, h);
         app.EndFrame();
+
+        // LOD proof: triangle count follows the camera
+        if ((frame % 60) == 0)
+            printf("LOD stats: %u / %u indices (%u tris)\n", terrain->rendered_indices(),
+                   terrain->max_indices(), terrain->rendered_indices() / 3);
 
         ++frame;
         if (maxFrames > 0 && frame >= maxFrames) running = false;

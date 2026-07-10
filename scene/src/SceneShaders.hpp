@@ -51,6 +51,8 @@ uniform vec3 u_baseColor;
 uniform vec3 u_lightDir; // direction the light travels (sun -> ground)
 uniform float u_unlit;
 uniform sampler2D u_diffuse;
+uniform sampler2D u_detail; // mid-gray neutral
+uniform float u_detailScale;
 uniform vec3 u_cameraPos;
 uniform vec2 u_specular; // x = strength, y = shininess
 uniform sampler2DArray u_shadowMap;
@@ -200,6 +202,7 @@ void main()
 {
     CLIP_APPLY;
     vec3 albedo = texture(u_diffuse, v_uv).rgb * u_baseColor;
+    albedo *= texture(u_detail, v_uv * u_detailScale).rgb * 2.0;
 
     int layer = 0;
     float occlusion = 0.0;

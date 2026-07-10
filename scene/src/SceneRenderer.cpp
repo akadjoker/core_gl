@@ -132,6 +132,7 @@ bool SceneRenderer::init()
     m_forward.Bind();
     m_forward.SetInt("u_diffuse", 0);
     m_forward.SetInt("u_shadowMap", 1);
+    m_forward.SetInt("u_detail", 6);
     m_forward.SetInt("u_pointShadow0", 2);
     m_forward.SetInt("u_pointShadow1", 3);
     m_forward.SetInt("u_spotShadow0", 4);
@@ -192,6 +193,8 @@ bool SceneRenderer::init()
 
     const gl::u8 white[4] = {255, 255, 255, 255};
     m_white.Load2D(white, 1, 1, gl::TextureFormat::RGBA8);
+    const gl::u8 gray[4] = {128, 128, 128, 255}; // neutral for the detail multiply
+    m_gray.Load2D(gray, 1, 1, gl::TextureFormat::RGBA8);
 
     m_items.reserve(256);
     m_ready = true;
@@ -219,6 +222,7 @@ void SceneRenderer::release()
     m_shadowTex.Release();
     m_shadowFbo.Release();
     m_white.Release();
+    m_gray.Release();
     m_cascades = 0;
     m_ready = false;
 }
@@ -565,6 +569,9 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
         Vec3 color = mat ? mat->base_color : Vec3(0.8f, 0.5f, 0.35f);
         gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
         diffuse->Bind(0);
+        gl::Texture* detail = (mat && mat->detail) ? mat->detail : &m_gray;
+        detail->Bind(6);
+        m_forward.SetFloat("u_detailScale", mat ? mat->detail_scale : 1.f);
         gl::Renderer::SetCull((mat && mat->double_sided) ? gl::CullMode::NONE : gl::CullMode::BACK);
         m_forward.SetFloat(m_locUnlit, (mat && mat->unlit) ? 1.f : 0.f);
         m_forward.SetVec2(m_locSpecular, mat ? mat->specular : 0.f, mat ? mat->shininess : 32.f);

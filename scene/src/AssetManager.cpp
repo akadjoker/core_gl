@@ -97,6 +97,11 @@ gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool 
 
     gl::Texture* tex = new gl::Texture();
     tex->Load2D(pixels, w, h, sRGB ? gl::TextureFormat::SRGB8_ALPHA8 : gl::TextureFormat::RGBA8);
+    // sane defaults for a diffuse map: tile and mip (terrain UVs go way
+    // past 1; CLAMP would smear the last texel row across the ground)
+    tex->SetWrap(gl::TextureWrap::REPEAT, gl::TextureWrap::REPEAT);
+    tex->GenerateMipmaps();
+    tex->SetFilter(gl::TextureFilter::LINEAR_MIPMAP_LINEAR, gl::TextureFilter::LINEAR);
     stbi_image_free(pixels);
 
     m_impl->textures[name] = tex;

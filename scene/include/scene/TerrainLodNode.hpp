@@ -75,6 +75,11 @@ public:
     void set_camera_position(const Vec3& pos) { m_camPos = pos; }
     void set_camera_forward(const Vec3& fwd) { m_camFwd = fwd; }
 
+    // LOD stats: indices actually in the dynamic IBO this frame — fly
+    // closer/farther and watch the triangle count change.
+    u32 rendered_indices() const { return m_indicesToRender; }
+    u32 max_indices() const { return m_maxIndices; }
+
     // CPU height queries (world space).
     float height_at(float wx, float wz) const;
     Vec3 normal_at(float wx, float wz) const;

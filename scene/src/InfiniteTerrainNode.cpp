@@ -119,7 +119,7 @@ void InfiniteTerrainNode::build_mesh(PatchEntry* patch, int px, int pz, int lod)
             mv.position = Vec3(wx, h, wz);
             mv.normal = calc_normal_uv(u, v);
             mv.tangent = Vec4(1.f, 0.f, 0.f, 1.f);
-            mv.uv = Vec2(wx, wz) * 0.03f; // texture tiles independently of the height wrap
+            mv.uv = Vec2(u, v); // base texture covers one heightmap repetition
             if (first)
             {
                 aabb.min = aabb.max = mv.position;
