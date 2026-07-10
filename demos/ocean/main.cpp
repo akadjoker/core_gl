@@ -178,10 +178,20 @@ int main(int argc, char** argv)
     Scene scene;
     assets::AssetManager& assets = assets::AssetManager::instance();
 
-    gl::Texture* bumpTex = assets.createTexture("ocean_bump");
-    buildBumpTexture(*bumpTex, 256);
-    gl::Texture* foamTex = assets.createTexture("ocean_foam");
-    buildFoamTexture(*foamTex, 256);
+    // real textures when available (run from the repo root); procedural
+    // stand-ins otherwise
+    gl::Texture* bumpTex = assets.loadTexture("ocean_bump", "assets/textures/waterbump.png");
+    if (!bumpTex)
+    {
+        bumpTex = assets.createTexture("ocean_bump");
+        buildBumpTexture(*bumpTex, 256);
+    }
+    gl::Texture* foamTex = assets.loadTexture("ocean_foam", "assets/textures/foam.png");
+    if (!foamTex)
+    {
+        foamTex = assets.createTexture("ocean_foam");
+        buildFoamTexture(*foamTex, 256);
+    }
 
     // the island: a brute-force heightmap crossing the waterline
     Mesh* islandMesh = scene.create_mesh();
