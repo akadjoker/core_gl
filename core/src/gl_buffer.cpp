@@ -29,7 +29,11 @@ void Buffer::Release()
 {
     // after Renderer::Shutdown the dead context already freed the object;
     // only the id reset matters then
-    if (id && state::ContextAlive()) glDeleteBuffers(1, &id);
+    if (id && state::ContextAlive())
+    {
+        glDeleteBuffers(1, &id);
+        state::OnBufferDeleted(id);
+    }
     id = 0;
     type = BufferType::UNKNOWN;
     byteSize = 0;

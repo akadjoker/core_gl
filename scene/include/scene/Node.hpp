@@ -22,6 +22,9 @@ enum NodeType : unsigned short
     NT_WATER,
     NT_OCEAN,
     NT_TERRAIN,
+    NT_TILEDTERRAIN,
+    NT_INFINITETERRAIN,
+    NT_TERRAINLOD,
     NT_COUNT
 };
 

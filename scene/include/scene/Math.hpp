@@ -2,6 +2,7 @@
 
 using u32 = unsigned int;
 using u16 = unsigned short;
+using u8 = unsigned char;
 #ifndef DEBUG_BREAK_IF
 #define DEBUG_BREAK_IF(cond) ((void)0)
 #endif
@@ -19,8 +20,7 @@ const float TwoPi = 6.283185307f;
 const float PiHalf = 1.570796327f;
 
 const float Epsilon = 0.000001f;
-const float ZeroEpsilon =
-    32.0f * MinPosFloat; // Very small epsilon for checking against 0.0f
+const float ZeroEpsilon = 32.0f * MinPosFloat; // Very small epsilon for checking against 0.0f
 
 const float M_INFINITY = 1.0e30f;
 
@@ -29,22 +29,70 @@ const float M_INFINITY = 1.0e30f;
 #define ToRadians(x) (float)(((x) * Pi / 180.0f))
 #define ToDegrees(x) (float)(((x) * 180.0f / Pi))
 
-inline float Sin(float a) { return sin(a * Pi / 180); }
-inline float Cos(float a) { return cos(a * Pi / 180); }
-inline float Tan(float a) { return tan(a * Pi / 180); }
-inline float SinRad(float a) { return sin(a); }
-inline float CosRad(float a) { return cos(a); }
-inline float TanRad(float a) { return tan(a); }
-inline float ASin(float a) { return asin(a) * 180 / Pi; }
-inline float ACos(float a) { return acos(a) * 180 / Pi; }
-inline float ATan(float a) { return atan(a) * 180 / Pi; }
-inline float ATan2(float y, float x) { return atan2(y, x) * 180 / Pi; }
-inline float ASinRad(float a) { return asin(a); }
-inline float ACosRad(float a) { return acos(a); }
-inline float ATanRad(float a) { return atan(a); }
-inline float ATan2Rad(float y, float x) { return atan2(y, x); }
-inline int Floor(float a) { return (int)(floor(a)); }
-inline int Ceil(float a) { return (int)(ceil(a)); }
+inline float Sin(float a)
+{
+    return sin(a * Pi / 180);
+}
+inline float Cos(float a)
+{
+    return cos(a * Pi / 180);
+}
+inline float Tan(float a)
+{
+    return tan(a * Pi / 180);
+}
+inline float SinRad(float a)
+{
+    return sin(a);
+}
+inline float CosRad(float a)
+{
+    return cos(a);
+}
+inline float TanRad(float a)
+{
+    return tan(a);
+}
+inline float ASin(float a)
+{
+    return asin(a) * 180 / Pi;
+}
+inline float ACos(float a)
+{
+    return acos(a) * 180 / Pi;
+}
+inline float ATan(float a)
+{
+    return atan(a) * 180 / Pi;
+}
+inline float ATan2(float y, float x)
+{
+    return atan2(y, x) * 180 / Pi;
+}
+inline float ASinRad(float a)
+{
+    return asin(a);
+}
+inline float ACosRad(float a)
+{
+    return acos(a);
+}
+inline float ATanRad(float a)
+{
+    return atan(a);
+}
+inline float ATan2Rad(float y, float x)
+{
+    return atan2(y, x);
+}
+inline int Floor(float a)
+{
+    return (int)(floor(a));
+}
+inline int Ceil(float a)
+{
+    return (int)(ceil(a));
+}
 inline int Trunc(float a)
 {
     if (a > 0)
@@ -68,23 +116,23 @@ inline float Sqrt(float a)
 }
 inline float Abs(float a)
 {
-    if (a < 0)
-        a = -a;
+    if (a < 0) a = -a;
     return a;
 }
 inline int Mod(int a, int b)
 {
-    if (b == 0)
-        return 0;
+    if (b == 0) return 0;
     return a % b;
 }
 inline float FMod(float a, float b)
 {
-    if (b == 0)
-        return 0;
+    if (b == 0) return 0;
     return fmod(a, b);
 }
-inline float Pow(float a, float b) { return pow(a, b); }
+inline float Pow(float a, float b)
+{
+    return pow(a, b);
+}
 inline int Sign(float a)
 {
     if (a < 0)
@@ -94,10 +142,22 @@ inline int Sign(float a)
     else
         return 0;
 }
-inline float Min(float a, float b) { return a < b ? a : b; }
-inline float Max(float a, float b) { return a > b ? a : b; }
-inline int Min(int a, int b) { return a < b ? a : b; }
-inline int Max(int a, int b) { return a > b ? a : b; }
+inline float Min(float a, float b)
+{
+    return a < b ? a : b;
+}
+inline float Max(float a, float b)
+{
+    return a > b ? a : b;
+}
+inline int Min(int a, int b)
+{
+    return a < b ? a : b;
+}
+inline int Max(int a, int b)
+{
+    return a > b ? a : b;
+}
 inline float Clamp(float a, float min, float max)
 {
     if (a < min)
@@ -124,9 +184,15 @@ enum NoInitHint
     NO_INIT
 };
 
-inline float degToRad(float f) { return f * 0.017453293f; }
+inline float degToRad(float f)
+{
+    return f * 0.017453293f;
+}
 
-inline float radToDeg(float f) { return f * 57.29577951f; }
+inline float radToDeg(float f)
+{
+    return f * 57.29577951f;
+}
 
 // -------------------------------------------------------------------------------------------------
 // Vector
@@ -161,17 +227,17 @@ struct Vec2
     // ------
     float operator[](unsigned int index) const { return *(&x + index); }
 
-    float &operator[](unsigned int index) { return *(&x + index); }
+    float& operator[](unsigned int index) { return *(&x + index); }
 
     // -----------
     // Comparisons
     // -----------
-    bool operator==(const Vec2 &v) const
+    bool operator==(const Vec2& v) const
     {
         return (x > v.x - Epsilon && x < v.x + Epsilon && y > v.y - Epsilon && y < v.y + Epsilon);
     }
 
-    bool operator!=(const Vec2 &v) const
+    bool operator!=(const Vec2& v) const
     {
         return (x < v.x - Epsilon || x > v.x + Epsilon || y < v.y - Epsilon || y > v.y + Epsilon);
     }
@@ -181,26 +247,26 @@ struct Vec2
     // ---------------------
     Vec2 operator-() const { return Vec2(-x, -y); }
 
-    Vec2 operator+(const Vec2 &v) const { return Vec2(x + v.x, y + v.y); }
+    Vec2 operator+(const Vec2& v) const { return Vec2(x + v.x, y + v.y); }
 
-    Vec2 &operator+=(const Vec2 &v) { return *this = *this + v; }
+    Vec2& operator+=(const Vec2& v) { return *this = *this + v; }
 
-    Vec2 operator-(const Vec2 &v) const { return Vec2(x - v.x, y - v.y); }
+    Vec2 operator-(const Vec2& v) const { return Vec2(x - v.x, y - v.y); }
 
-    Vec2 &operator-=(const Vec2 &v) { return *this = *this - v; }
+    Vec2& operator-=(const Vec2& v) { return *this = *this - v; }
 
     Vec2 operator*(const float f) const { return Vec2(x * f, y * f); }
 
-    Vec2 &operator*=(const float f) { return *this = *this * f; }
+    Vec2& operator*=(const float f) { return *this = *this * f; }
 
     Vec2 operator/(const float f) const { return Vec2(x / f, y / f); }
 
-    Vec2 &operator/=(const float f) { return *this = *this / f; }
+    Vec2& operator/=(const float f) { return *this = *this / f; }
 
     // ----------------
     // Special products
     // ----------------
-    float dot(const Vec2 &v) const { return x * v.x + y * v.y; }
+    float dot(const Vec2& v) const { return x * v.x + y * v.y; }
 
     // ----------------
     // Other operations
@@ -220,10 +286,7 @@ struct Vec2
         y *= invLen;
     }
 
-    Vec2 lerp(const Vec2 &v, float f) const
-    {
-        return Vec2(x + (v.x - x) * f, y + (v.y - y) * f);
-    }
+    Vec2 lerp(const Vec2& v, float f) const { return Vec2(x + (v.x - x) * f, y + (v.y - y) * f); }
 };
 
 struct Vec3
@@ -246,23 +309,21 @@ struct Vec3
 
     // --- Access ---
     float operator[](unsigned i) const { return *(&x + i); } // sem bounds-check
-    float &operator[](unsigned i) { return *(&x + i); }
+    float& operator[](unsigned i) { return *(&x + i); }
 
     // --- Comparisons (usa a tua constante Epsilon) ---
-    bool operator==(const Vec3 &v) const
+    bool operator==(const Vec3& v) const
     {
-        return (x > v.x - Epsilon && x < v.x + Epsilon && y > v.y - Epsilon && y < v.y + Epsilon && z > v.z - Epsilon && z < v.z + Epsilon);
+        return (x > v.x - Epsilon && x < v.x + Epsilon && y > v.y - Epsilon && y < v.y + Epsilon &&
+                z > v.z - Epsilon && z < v.z + Epsilon);
     }
-    bool operator!=(const Vec3 &v) const { return !(*this == v); }
+    bool operator!=(const Vec3& v) const { return !(*this == v); }
 
     // --- Arithmetic ---
     Vec3 operator-() const { return Vec3(-x, -y, -z); }
 
-    Vec3 operator+(const Vec3 &v) const
-    {
-        return Vec3(x + v.x, y + v.y, z + v.z);
-    }
-    Vec3 &operator+=(const Vec3 &v)
+    Vec3 operator+(const Vec3& v) const { return Vec3(x + v.x, y + v.y, z + v.z); }
+    Vec3& operator+=(const Vec3& v)
     {
         x += v.x;
         y += v.y;
@@ -270,11 +331,8 @@ struct Vec3
         return *this;
     }
 
-    Vec3 operator-(const Vec3 &v) const
-    {
-        return Vec3(x - v.x, y - v.y, z - v.z);
-    }
-    Vec3 &operator-=(const Vec3 &v)
+    Vec3 operator-(const Vec3& v) const { return Vec3(x - v.x, y - v.y, z - v.z); }
+    Vec3& operator-=(const Vec3& v)
     {
         x -= v.x;
         y -= v.y;
@@ -283,7 +341,7 @@ struct Vec3
     }
 
     Vec3 operator*(float f) const { return Vec3(x * f, y * f, z * f); }
-    Vec3 &operator*=(float f)
+    Vec3& operator*=(float f)
     {
         x *= f;
         y *= f;
@@ -304,7 +362,7 @@ struct Vec3
         float inv = 1.0f / f;
         return Vec3(x * inv, y * inv, z * inv);
     }
-    Vec3 &operator/=(float f)
+    Vec3& operator/=(float f)
     {
 #ifdef DEBUG
         if (f == 0.0f)
@@ -321,8 +379,8 @@ struct Vec3
     }
 
     // --- Special products ---
-    float dot(const Vec3 &v) const { return x * v.x + y * v.y + z * v.z; }
-    Vec3 cross(const Vec3 &v) const
+    float dot(const Vec3& v) const { return x * v.x + y * v.y + z * v.z; }
+    Vec3 cross(const Vec3& v) const
     {
         return Vec3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
     }
@@ -331,18 +389,14 @@ struct Vec3
     float length() const { return sqrtf(x * x + y * y + z * z); }
     float length_squared() const { return x * x + y * y + z * z; }
 
-    float distance(const Vec3 &v) const { return (*this - v).length(); }
-    float distance_squared(const Vec3 &v) const
-    {
-        return (*this - v).length_squared();
-    }
+    float distance(const Vec3& v) const { return (*this - v).length(); }
+    float distance_squared(const Vec3& v) const { return (*this - v).length_squared(); }
 
     // --- Normalize ---
     Vec3 normalized() const
     {
         float len2 = length_squared();
-        if (len2 <= 0.0f)
-            return Vec3(0.0f, 0.0f, 0.0f);
+        if (len2 <= 0.0f) return Vec3(0.0f, 0.0f, 0.0f);
         float invLen = 1.0f / sqrtf(len2);
         return Vec3(x * invLen, y * invLen, z * invLen);
     }
@@ -361,66 +415,52 @@ struct Vec3
     }
 
     // --- Lerp ---
-    Vec3 lerp(const Vec3 &v, float t) const
+    Vec3 lerp(const Vec3& v, float t) const
     {
         return Vec3(x + (v.x - x) * t, y + (v.y - y) * t, z + (v.z - z) * t);
     }
-    static Vec3 Lerp(const Vec3 &a, const Vec3 &b, float t)
-    {
-        return a.lerp(b, t);
-    }
+    static Vec3 Lerp(const Vec3& a, const Vec3& b, float t) { return a.lerp(b, t); }
 
     // --- Helpers ---
-    Vec3 Min(const Vec3 &v) const
+    Vec3 Min(const Vec3& v) const
     {
         return Vec3(x < v.x ? x : v.x, y < v.y ? y : v.y, z < v.z ? z : v.z);
     }
-    Vec3 Max(const Vec3 &v) const
+    Vec3 Max(const Vec3& v) const
     {
         return Vec3(x > v.x ? x : v.x, y > v.y ? y : v.y, z > v.z ? z : v.z);
     }
 
-    static Vec3 Clamp(const Vec3 &v, const Vec3 &mn, const Vec3 &mx)
+    static Vec3 Clamp(const Vec3& v, const Vec3& mn, const Vec3& mx)
     {
         return Vec3(v.x < mn.x ? mn.x : (v.x > mx.x ? mx.x : v.x),
                     v.y < mn.y ? mn.y : (v.y > mx.y ? mx.y : v.y),
                     v.z < mn.z ? mn.z : (v.z > mx.z ? mx.z : v.z));
     }
 
-    static Vec3 Cross(const Vec3 &a, const Vec3 &b) { return a.cross(b); }
-    static float Dot(const Vec3 &a, const Vec3 &b) { return a.dot(b); }
+    static Vec3 Cross(const Vec3& a, const Vec3& b) { return a.cross(b); }
+    static float Dot(const Vec3& a, const Vec3& b) { return a.dot(b); }
 
-    static Vec3 Sub(const Vec3 &a, const Vec3 &b) { return a - b; }
-    static Vec3 Add(const Vec3 &a, const Vec3 &b) { return a + b; }
+    static Vec3 Sub(const Vec3& a, const Vec3& b) { return a - b; }
+    static Vec3 Add(const Vec3& a, const Vec3& b) { return a + b; }
 
-    static Vec3 Normalize(const Vec3 &v) { return v.normalized(); }
+    static Vec3 Normalize(const Vec3& v) { return v.normalized(); }
 
-    static float DistanceFromSq(const Vec3 &a, const Vec3 &b)
-    {
-        return (a - b).length_squared();
-    }
-    static float DistanceFrom(const Vec3 &a, const Vec3 &b)
-    {
-        return (a - b).length();
-    }
-    static float Length(const Vec3 &v) { return v.length(); }
+    static float DistanceFromSq(const Vec3& a, const Vec3& b) { return (a - b).length_squared(); }
+    static float DistanceFrom(const Vec3& a, const Vec3& b) { return (a - b).length(); }
+    static float Length(const Vec3& v) { return v.length(); }
 
     // clamp para acosf
-    static float Clamp1(float x)
-    {
-        return (x < -1.0f) ? -1.0f : (x > 1.0f) ? 1.0f
-                                                : x;
-    }
+    static float Clamp1(float x) { return (x < -1.0f) ? -1.0f : (x > 1.0f) ? 1.0f : x; }
 
     // ângulos por vértice (weights)
-    static Vec3 GetAngleWeights(const Vec3 &v, const Vec3 &v1, const Vec3 &v2)
+    static Vec3 GetAngleWeights(const Vec3& v, const Vec3& v1, const Vec3& v2)
     {
         const float a2 = DistanceFromSq(v1, v2), as = sqrtf(a2); // oposto a v
         const float b2 = DistanceFromSq(v, v2), bs = sqrtf(b2);  // oposto a v1
         const float c2 = DistanceFromSq(v, v1), cs = sqrtf(c2);  // oposto a v2
         const float eps = 1e-12f;
-        if (as < eps || bs < eps || cs < eps)
-            return Vec3(1.0f);
+        if (as < eps || bs < eps || cs < eps) return Vec3(1.0f);
         const float cosA = Clamp1((b2 + c2 - a2) / (2.f * bs * cs));
         const float cosB = Clamp1((a2 + c2 - b2) / (2.f * as * cs));
         const float cosC = Clamp1((a2 + b2 - c2) / (2.f * as * bs));
@@ -428,7 +468,10 @@ struct Vec3
     }
 };
 
-inline Vec3 operator*(float s, const Vec3 &v) { return v * s; }
+inline Vec3 operator*(float s, const Vec3& v)
+{
+    return v * s;
+}
 
 struct Vec4
 {
@@ -441,12 +484,9 @@ struct Vec4
     explicit Vec4(Vec3 v, float W) : x(v.x), y(v.y), z(v.z), w(W) {}
 
     float operator[](unsigned i) const { return *(&x + i); }
-    float &operator[](unsigned i) { return *(&x + i); }
+    float& operator[](unsigned i) { return *(&x + i); }
 
-    Vec4 operator+(const Vec4 &v) const
-    {
-        return Vec4(x + v.x, y + v.y, z + v.z, w + v.w);
-    }
+    Vec4 operator+(const Vec4& v) const { return Vec4(x + v.x, y + v.y, z + v.z, w + v.w); }
     Vec4 operator-() const { return Vec4(-x, -y, -z, -w); }
     Vec4 operator*(float s) const { return Vec4(x * s, y * s, z * s, w * s); }
     Vec4 operator/(float d) const
@@ -455,7 +495,7 @@ struct Vec4
         return Vec4(x / d, y / d, z / d, w / d);
     }
 
-    Vec4 &operator+=(const Vec4 &v)
+    Vec4& operator+=(const Vec4& v)
     {
         x += v.x;
         y += v.y;
@@ -463,7 +503,7 @@ struct Vec4
         w += v.w;
         return *this;
     }
-    Vec4 &operator-=(const Vec4 &v)
+    Vec4& operator-=(const Vec4& v)
     {
         x -= v.x;
         y -= v.y;
@@ -471,7 +511,7 @@ struct Vec4
         w -= v.w;
         return *this;
     }
-    Vec4 &operator*=(float s)
+    Vec4& operator*=(float s)
     {
         x *= s;
         y *= s;
@@ -481,22 +521,16 @@ struct Vec4
     }
 
     // Integração com Vec3 (afeta só xyz; w preserva)
-    Vec4 operator+(const Vec3 &v) const
-    {
-        return Vec4(x + v.x, y + v.y, z + v.z, w);
-    }
-    Vec4 operator-(const Vec3 &v) const
-    {
-        return Vec4(x - v.x, y - v.y, z - v.z, w);
-    }
-    Vec4 &operator+=(const Vec3 &v)
+    Vec4 operator+(const Vec3& v) const { return Vec4(x + v.x, y + v.y, z + v.z, w); }
+    Vec4 operator-(const Vec3& v) const { return Vec4(x - v.x, y - v.y, z - v.z, w); }
+    Vec4& operator+=(const Vec3& v)
     {
         x += v.x;
         y += v.y;
         z += v.z;
         return *this;
     }
-    Vec4 &operator-=(const Vec3 &v)
+    Vec4& operator-=(const Vec3& v)
     {
         x -= v.x;
         y -= v.y;
@@ -505,7 +539,7 @@ struct Vec4
     }
 
     Vec3 xyz() const { return Vec3{x, y, z}; }
-    void setXYZ(const Vec3 &v)
+    void setXYZ(const Vec3& v)
     {
         x = v.x;
         y = v.y;
@@ -514,7 +548,10 @@ struct Vec4
 };
 
 // Simétrico: float * Vec4
-inline Vec4 operator*(float s, const Vec4 &v) { return v * s; }
+inline Vec4 operator*(float s, const Vec4& v)
+{
+    return v * s;
+}
 
 // -------------------------------------------------------------------------------------------------
 // Quaternion
@@ -530,8 +567,7 @@ struct Quaternion
     // ------------
     Quaternion() : x(0.0f), y(0.0f), z(0.0f), w(1.0f) {}
 
-    explicit Quaternion(const float x, const float y, const float z,
-                        const float w)
+    explicit Quaternion(const float x, const float y, const float z, const float w)
         : x(x), y(y), z(z), w(w)
     {
     }
@@ -546,7 +582,7 @@ struct Quaternion
         *this = pitch * roll * yaw;
     }
 
-    void ToAxisAngle(Vec3 &axis, float &angle) const
+    void ToAxisAngle(Vec3& axis, float& angle) const
     {
         Quaternion qn = Normalize(*this);
         angle = 2.0f * acosf(qn.w);
@@ -560,15 +596,14 @@ struct Quaternion
     // ---------------------
     // Arithmetic operations
     // ---------------------
-    Quaternion operator*(const Quaternion &q) const
+    Quaternion operator*(const Quaternion& q) const
     {
-        return Quaternion(y * q.z - z * q.y + q.x * w + x * q.w,
-                          z * q.x - x * q.z + q.y * w + y * q.w,
-                          x * q.y - y * q.x + q.z * w + z * q.w,
-                          w * q.w - (x * q.x + y * q.y + z * q.z));
+        return Quaternion(
+            y * q.z - z * q.y + q.x * w + x * q.w, z * q.x - x * q.z + q.y * w + y * q.w,
+            x * q.y - y * q.x + q.z * w + z * q.w, w * q.w - (x * q.x + y * q.y + z * q.z));
     }
 
-    Quaternion &operator*=(const Quaternion &q) { return *this = *this * q; }
+    Quaternion& operator*=(const Quaternion& q) { return *this = *this * q; }
 
     void normalize()
     {
@@ -592,9 +627,10 @@ struct Quaternion
         *this = *this * Quaternion(x, y, z, 0) * Quaternion(-x, -y, -z, 0);
     }
 
-    void rotate(const Vec3 &rotation)
+    void rotate(const Vec3& rotation)
     {
-        *this = *this * Quaternion(rotation.x, rotation.y, rotation.z, 0) * Quaternion(-rotation.x, -rotation.y, -rotation.z, 0);
+        *this = *this * Quaternion(rotation.x, rotation.y, rotation.z, 0) *
+                Quaternion(-rotation.x, -rotation.y, -rotation.z, 0);
     }
 
     void rotate(float angle, float ax, float ay, float az)
@@ -602,7 +638,7 @@ struct Quaternion
         *this = *this * Quaternion(angle, ax, ay, az) * Quaternion(-angle, -ax, -ay, -az);
     }
 
-    void rotateAxisAngle(const Vec3 &axis, float angle)
+    void rotateAxisAngle(const Vec3& axis, float angle)
     {
         *this *= FromAxisAngle(axis, angle);
         normalize();
@@ -612,16 +648,10 @@ struct Quaternion
     void rotateRoll(float rol) { rotateAxisAngle(Vec3(0, 0, 1), rol); }
 
     // --- De Euler / Para Euler ---
-    void setEuler(float ex, float ey, float ez)
-    {
-        *this = Quaternion(ex, ey, ez);
-    }
-    void setEuler(const Vec3 &e) { setEuler(e.x, e.y, e.z); }
+    void setEuler(float ex, float ey, float ez) { *this = Quaternion(ex, ey, ez); }
+    void setEuler(const Vec3& e) { setEuler(e.x, e.y, e.z); }
 
-    static inline float clamp1(float v)
-    {
-        return v < -1.f ? -1.f : (v > 1.f ? 1.f : v);
-    }
+    static inline float clamp1(float v) { return v < -1.f ? -1.f : (v > 1.f ? 1.f : v); }
     Vec3 getEuler() const
     {
         // Y*X*Z
@@ -637,26 +667,16 @@ struct Quaternion
     Quaternion inverted() const
     {
         float len2 = x * x + y * y + z * z + w * w;
-        if (len2 <= 0.0f)
-            return Quaternion(); // identidade
+        if (len2 <= 0.0f) return Quaternion(); // identidade
         float inv = 1.0f / len2;
         return Quaternion(-x * inv, -y * inv, -z * inv, w * inv);
     }
 
-    Quaternion Roll(float x)
-    {
-        return Quaternion(sinf(x * 0.5f), 0, 0, cosf(x * 0.5f));
-    }
+    Quaternion Roll(float x) { return Quaternion(sinf(x * 0.5f), 0, 0, cosf(x * 0.5f)); }
 
-    Quaternion Pitch(float x)
-    {
-        return Quaternion(0, sinf(x * 0.5f), 0, cosf(x * 0.5f));
-    }
+    Quaternion Pitch(float x) { return Quaternion(0, sinf(x * 0.5f), 0, cosf(x * 0.5f)); }
 
-    Quaternion Yaw(float x)
-    {
-        return Quaternion(0, 0, sinf(x * 0.5f), cosf(x * 0.5f));
-    }
+    Quaternion Yaw(float x) { return Quaternion(0, 0, sinf(x * 0.5f), cosf(x * 0.5f)); }
 
     void set(const float x, const float y, const float z, const float w)
     {
@@ -668,7 +688,7 @@ struct Quaternion
     // ----------------
     // Other operations
     // ----------------
-    Vec3 rotateVector(const Vec3 &v) const
+    Vec3 rotateVector(const Vec3& v) const
     {
         // v' = q * (0,v) * conj(q)  (otimizado)
         Vec3 qv(x, y, z);
@@ -676,7 +696,7 @@ struct Quaternion
         return v + w * t + Vec3::Cross(qv, t);
     }
 
-    Quaternion slerp(const Quaternion &q, const float t) const
+    Quaternion slerp(const Quaternion& q, const float t) const
     {
         // Spherical linear interpolation between two quaternions
         // Note: SLERP is not commutative
@@ -711,12 +731,11 @@ struct Quaternion
         }
 
         // Calculate final quaternion
-        return Quaternion(
-            x * scale0 + q1.x * scale1, y * scale0 + q1.y * scale1,
-            z * scale0 + q1.z * scale1, w * scale0 + q1.w * scale1);
+        return Quaternion(x * scale0 + q1.x * scale1, y * scale0 + q1.y * scale1,
+                          z * scale0 + q1.z * scale1, w * scale0 + q1.w * scale1);
     }
 
-    Quaternion nlerp(const Quaternion &q, const float t) const
+    Quaternion nlerp(const Quaternion& q, const float t) const
     {
         // Normalized linear quaternion interpolation
         // Note: NLERP is faster than SLERP and commutative but does not yield
@@ -727,38 +746,34 @@ struct Quaternion
 
         // Use the shortest path and interpolate linearly
         if (cosTheta < 0)
-            qt = Quaternion(x + (-q.x - x) * t, y + (-q.y - y) * t,
-                            z + (-q.z - z) * t, w + (-q.w - w) * t);
+            qt = Quaternion(x + (-q.x - x) * t, y + (-q.y - y) * t, z + (-q.z - z) * t,
+                            w + (-q.w - w) * t);
         else
-            qt = Quaternion(x + (q.x - x) * t, y + (q.y - y) * t,
-                            z + (q.z - z) * t, w + (q.w - w) * t);
+            qt = Quaternion(x + (q.x - x) * t, y + (q.y - y) * t, z + (q.z - z) * t,
+                            w + (q.w - w) * t);
 
         // Return normalized quaternion
-        float invLen =
-            1.0f / sqrtf(qt.x * qt.x + qt.y * qt.y + qt.z * qt.z + qt.w * qt.w);
-        return Quaternion(qt.x * invLen, qt.y * invLen, qt.z * invLen,
-                          qt.w * invLen);
+        float invLen = 1.0f / sqrtf(qt.x * qt.x + qt.y * qt.y + qt.z * qt.z + qt.w * qt.w);
+        return Quaternion(qt.x * invLen, qt.y * invLen, qt.z * invLen, qt.w * invLen);
     }
 
-    static Quaternion Slerp(const Quaternion &a, const Quaternion &b,
-                            const float t)
+    static Quaternion Slerp(const Quaternion& a, const Quaternion& b, const float t)
     {
         return a.slerp(b, t);
     }
 
-    static Quaternion Nlerp(const Quaternion &a, const Quaternion &b,
-                            const float t)
+    static Quaternion Nlerp(const Quaternion& a, const Quaternion& b, const float t)
     {
         return a.nlerp(b, t);
     }
 
-    static Quaternion Normalize(const Quaternion &q)
+    static Quaternion Normalize(const Quaternion& q)
     {
         Quaternion out(q);
         out.normalize();
         return out;
     }
-    static Quaternion LookRotation(const Vec3 &forwardRaw, const Vec3 &upRaw)
+    static Quaternion LookRotation(const Vec3& forwardRaw, const Vec3& upRaw)
     {
         Vec3 f = forwardRaw.normalized();
         Vec3 r = Vec3::Cross(upRaw, f).normalized();
@@ -806,7 +821,7 @@ struct Quaternion
     }
     static Quaternion Identity() { return Quaternion(0, 0, 0, 1); }
 
-    static float Dot(const Quaternion &a, const Quaternion &b)
+    static float Dot(const Quaternion& a, const Quaternion& b)
     {
         return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
     }
@@ -815,17 +830,15 @@ struct Quaternion
     {
         float s = sinf(angle * 0.5f);
         axis.normalize();
-        return Quaternion(axis.x * s, axis.y * s, axis.z * s,
-                          cosf(angle * 0.5f));
+        return Quaternion(axis.x * s, axis.y * s, axis.z * s, cosf(angle * 0.5f));
     }
 
-    static Quaternion FromTwoVectors(const Vec3 &fromRaw, const Vec3 &toRaw)
+    static Quaternion FromTwoVectors(const Vec3& fromRaw, const Vec3& toRaw)
     {
         Vec3 from = fromRaw.normalized();
         Vec3 to = toRaw.normalized();
         float d = Vec3::Dot(from, to);
-        if (d > 1.0f - 1e-6f)
-            return Identity();
+        if (d > 1.0f - 1e-6f) return Identity();
         if (d < -1.0f + 1e-6f)
         {
             // escolhe um eixo ortogonal
@@ -836,8 +849,7 @@ struct Quaternion
         Vec3 c = Vec3::Cross(from, to);
         float s = sqrtf((1.0f + d) * 2.0f);
         float invs = 1.0f / s;
-        return Normalize(
-            Quaternion(c.x * invs, c.y * invs, c.z * invs, s * 0.5f));
+        return Normalize(Quaternion(c.x * invs, c.y * invs, c.z * invs, s * 0.5f));
     }
 };
 
@@ -867,7 +879,7 @@ struct Mat4
 
         return m;
     }
-    static Mat4 Translate(const Vec3 &v) { return Translate(v.x, v.y, v.z); }
+    static Mat4 Translate(const Vec3& v) { return Translate(v.x, v.y, v.z); }
 
     static Mat4 Scale(float x, float y, float z)
     {
@@ -886,15 +898,14 @@ struct Mat4
         return Mat4(Quaternion(x, y, z));
     }
 
-    static Mat4 Rotate(const Quaternion &q) { return Mat4(q); }
+    static Mat4 Rotate(const Quaternion& q) { return Mat4(q); }
 
     static Mat4 Rotate(Vec3 axis, float angle)
     {
         axis = axis * sinf(angle * 0.5f);
         return Mat4(Quaternion(axis.x, axis.y, axis.z, cosf(angle * 0.5f)));
     }
-    static Mat4 Perspective(double fovY, double aspect, double nearPlane,
-                            double farPlane)
+    static Mat4 Perspective(double fovY, double aspect, double nearPlane, double farPlane)
     {
         double height = 1.0 / tan(fovY * Pi / 360.0);
         double width = height / aspect;
@@ -912,8 +923,7 @@ struct Mat4
 
         return m;
     }
-    static Mat4 Perspective(float l, float r, float b, float t, float n,
-                            float f)
+    static Mat4 Perspective(float l, float r, float b, float t, float n, float f)
     {
         Mat4 m;
 
@@ -943,7 +953,7 @@ struct Mat4
         return m;
     }
 
-    static Mat4 LookAt(const Vec3 &eye, const Vec3 &center, const Vec3 &up)
+    static Mat4 LookAt(const Vec3& eye, const Vec3& center, const Vec3& up)
     {
         Vec3 f = (center - eye).normalized();
         Vec3 u = up.normalized();
@@ -971,13 +981,13 @@ struct Mat4
         return m;
     }
 
-    static void fastMult43(Mat4 &dst, const Mat4 &m1, const Mat4 &m2)
+    static void fastMult43(Mat4& dst, const Mat4& m1, const Mat4& m2)
     {
         // Note: dst may not be the same as m1 or m2
 
-        float *dstx = dst.x;
-        const float *m1x = m1.x;
-        const float *m2x = m2.x;
+        float* dstx = dst.x;
+        const float* m1x = m1.x;
+        const float* m2x = m2.x;
 
         dstx[0] = m1x[0] * m2x[0] + m1x[4] * m2x[1] + m1x[8] * m2x[2];
         dstx[1] = m1x[1] * m2x[0] + m1x[5] * m2x[1] + m1x[9] * m2x[2];
@@ -1022,7 +1032,7 @@ struct Mat4
         return m;
     }
 
-    void set(const float *floatArray16)
+    void set(const float* floatArray16)
     {
         x[0] = floatArray16[0];
         x[1] = floatArray16[1];
@@ -1070,7 +1080,7 @@ struct Mat4
         // Constructor without default initialization
     }
 
-    Mat4(const float *floatArray16)
+    Mat4(const float* floatArray16)
     {
         for (unsigned int i = 0; i < 4; ++i)
         {
@@ -1081,7 +1091,7 @@ struct Mat4
         }
     }
 
-    Mat4(const Quaternion &q)
+    Mat4(const Quaternion& q)
     {
         // Calculate coefficients
         float x2 = q.x + q.x, y2 = q.y + q.y, z2 = q.z + q.z;
@@ -1110,7 +1120,7 @@ struct Mat4
     // ----------
     // Matrix sum
     // ----------
-    Mat4 operator+(const Mat4 &m) const
+    Mat4 operator+(const Mat4& m) const
     {
         Mat4 mf(NO_INIT);
 
@@ -1134,50 +1144,34 @@ struct Mat4
         return mf;
     }
 
-    Mat4 &operator+=(const Mat4 &m) { return *this = *this + m; }
+    Mat4& operator+=(const Mat4& m) { return *this = *this + m; }
 
     // ---------------------
     // Matrix multiplication
     // ---------------------
-    Mat4 operator*(const Mat4 &m) const
+    Mat4 operator*(const Mat4& m) const
     {
         Mat4 mf(NO_INIT);
 
-        mf.x[0] =
-            x[0] * m.x[0] + x[4] * m.x[1] + x[8] * m.x[2] + x[12] * m.x[3];
-        mf.x[1] =
-            x[1] * m.x[0] + x[5] * m.x[1] + x[9] * m.x[2] + x[13] * m.x[3];
-        mf.x[2] =
-            x[2] * m.x[0] + x[6] * m.x[1] + x[10] * m.x[2] + x[14] * m.x[3];
-        mf.x[3] =
-            x[3] * m.x[0] + x[7] * m.x[1] + x[11] * m.x[2] + x[15] * m.x[3];
+        mf.x[0] = x[0] * m.x[0] + x[4] * m.x[1] + x[8] * m.x[2] + x[12] * m.x[3];
+        mf.x[1] = x[1] * m.x[0] + x[5] * m.x[1] + x[9] * m.x[2] + x[13] * m.x[3];
+        mf.x[2] = x[2] * m.x[0] + x[6] * m.x[1] + x[10] * m.x[2] + x[14] * m.x[3];
+        mf.x[3] = x[3] * m.x[0] + x[7] * m.x[1] + x[11] * m.x[2] + x[15] * m.x[3];
 
-        mf.x[4] =
-            x[0] * m.x[4] + x[4] * m.x[5] + x[8] * m.x[6] + x[12] * m.x[7];
-        mf.x[5] =
-            x[1] * m.x[4] + x[5] * m.x[5] + x[9] * m.x[6] + x[13] * m.x[7];
-        mf.x[6] =
-            x[2] * m.x[4] + x[6] * m.x[5] + x[10] * m.x[6] + x[14] * m.x[7];
-        mf.x[7] =
-            x[3] * m.x[4] + x[7] * m.x[5] + x[11] * m.x[6] + x[15] * m.x[7];
+        mf.x[4] = x[0] * m.x[4] + x[4] * m.x[5] + x[8] * m.x[6] + x[12] * m.x[7];
+        mf.x[5] = x[1] * m.x[4] + x[5] * m.x[5] + x[9] * m.x[6] + x[13] * m.x[7];
+        mf.x[6] = x[2] * m.x[4] + x[6] * m.x[5] + x[10] * m.x[6] + x[14] * m.x[7];
+        mf.x[7] = x[3] * m.x[4] + x[7] * m.x[5] + x[11] * m.x[6] + x[15] * m.x[7];
 
-        mf.x[8] =
-            x[0] * m.x[8] + x[4] * m.x[9] + x[8] * m.x[10] + x[12] * m.x[11];
-        mf.x[9] =
-            x[1] * m.x[8] + x[5] * m.x[9] + x[9] * m.x[10] + x[13] * m.x[11];
-        mf.x[10] =
-            x[2] * m.x[8] + x[6] * m.x[9] + x[10] * m.x[10] + x[14] * m.x[11];
-        mf.x[11] =
-            x[3] * m.x[8] + x[7] * m.x[9] + x[11] * m.x[10] + x[15] * m.x[11];
+        mf.x[8] = x[0] * m.x[8] + x[4] * m.x[9] + x[8] * m.x[10] + x[12] * m.x[11];
+        mf.x[9] = x[1] * m.x[8] + x[5] * m.x[9] + x[9] * m.x[10] + x[13] * m.x[11];
+        mf.x[10] = x[2] * m.x[8] + x[6] * m.x[9] + x[10] * m.x[10] + x[14] * m.x[11];
+        mf.x[11] = x[3] * m.x[8] + x[7] * m.x[9] + x[11] * m.x[10] + x[15] * m.x[11];
 
-        mf.x[12] =
-            x[0] * m.x[12] + x[4] * m.x[13] + x[8] * m.x[14] + x[12] * m.x[15];
-        mf.x[13] =
-            x[1] * m.x[12] + x[5] * m.x[13] + x[9] * m.x[14] + x[13] * m.x[15];
-        mf.x[14] =
-            x[2] * m.x[12] + x[6] * m.x[13] + x[10] * m.x[14] + x[14] * m.x[15];
-        mf.x[15] =
-            x[3] * m.x[12] + x[7] * m.x[13] + x[11] * m.x[14] + x[15] * m.x[15];
+        mf.x[12] = x[0] * m.x[12] + x[4] * m.x[13] + x[8] * m.x[14] + x[12] * m.x[15];
+        mf.x[13] = x[1] * m.x[12] + x[5] * m.x[13] + x[9] * m.x[14] + x[13] * m.x[15];
+        mf.x[14] = x[2] * m.x[12] + x[6] * m.x[13] + x[10] * m.x[14] + x[14] * m.x[15];
+        mf.x[15] = x[3] * m.x[12] + x[7] * m.x[13] + x[11] * m.x[14] + x[15] * m.x[15];
 
         return mf;
     }
@@ -1209,23 +1203,22 @@ struct Mat4
     // ----------------------------
     // Vector-Matrix multiplication
     // ----------------------------
-    Vec3 operator*(const Vec3 &v) const
+    Vec3 operator*(const Vec3& v) const
     {
         return Vec3(v.x * c[0][0] + v.y * c[1][0] + v.z * c[2][0] + c[3][0],
                     v.x * c[0][1] + v.y * c[1][1] + v.z * c[2][1] + c[3][1],
                     v.x * c[0][2] + v.y * c[1][2] + v.z * c[2][2] + c[3][2]);
     }
 
-    Vec4 operator*(const Vec4 &v) const
+    Vec4 operator*(const Vec4& v) const
     {
-        return Vec4(
-            v.x * c[0][0] + v.y * c[1][0] + v.z * c[2][0] + v.w * c[3][0],
-            v.x * c[0][1] + v.y * c[1][1] + v.z * c[2][1] + v.w * c[3][1],
-            v.x * c[0][2] + v.y * c[1][2] + v.z * c[2][2] + v.w * c[3][2],
-            v.x * c[0][3] + v.y * c[1][3] + v.z * c[2][3] + v.w * c[3][3]);
+        return Vec4(v.x * c[0][0] + v.y * c[1][0] + v.z * c[2][0] + v.w * c[3][0],
+                    v.x * c[0][1] + v.y * c[1][1] + v.z * c[2][1] + v.w * c[3][1],
+                    v.x * c[0][2] + v.y * c[1][2] + v.z * c[2][2] + v.w * c[3][2],
+                    v.x * c[0][3] + v.y * c[1][3] + v.z * c[2][3] + v.w * c[3][3]);
     }
 
-    Vec3 mult33Vec(const Vec3 &v) const
+    Vec3 mult33Vec(const Vec3& v) const
     {
         return Vec3(v.x * c[0][0] + v.y * c[1][0] + v.z * c[2][0],
                     v.x * c[0][1] + v.y * c[1][1] + v.z * c[2][1],
@@ -1250,12 +1243,9 @@ struct Mat4
         *this = Rotate(rx, ry, rz) * *this;
     }
 
-    void rotate(const float angle, const Vec3 &axis)
-    {
-        *this = Rotate(axis, angle) * *this;
-    }
+    void rotate(const float angle, const Vec3& axis) { *this = Rotate(axis, angle) * *this; }
 
-    void rotate(const Quaternion &q) { *this = Rotate(q) * *this; }
+    void rotate(const Quaternion& q) { *this = Rotate(q) * *this; }
 
     // ---------------
     // Other
@@ -1280,7 +1270,18 @@ struct Mat4
 
     float determinant() const
     {
-        return c[0][3] * c[1][2] * c[2][1] * c[3][0] - c[0][2] * c[1][3] * c[2][1] * c[3][0] - c[0][3] * c[1][1] * c[2][2] * c[3][0] + c[0][1] * c[1][3] * c[2][2] * c[3][0] + c[0][2] * c[1][1] * c[2][3] * c[3][0] - c[0][1] * c[1][2] * c[2][3] * c[3][0] - c[0][3] * c[1][2] * c[2][0] * c[3][1] + c[0][2] * c[1][3] * c[2][0] * c[3][1] + c[0][3] * c[1][0] * c[2][2] * c[3][1] - c[0][0] * c[1][3] * c[2][2] * c[3][1] - c[0][2] * c[1][0] * c[2][3] * c[3][1] + c[0][0] * c[1][2] * c[2][3] * c[3][1] + c[0][3] * c[1][1] * c[2][0] * c[3][2] - c[0][1] * c[1][3] * c[2][0] * c[3][2] - c[0][3] * c[1][0] * c[2][1] * c[3][2] + c[0][0] * c[1][3] * c[2][1] * c[3][2] + c[0][1] * c[1][0] * c[2][3] * c[3][2] - c[0][0] * c[1][1] * c[2][3] * c[3][2] - c[0][2] * c[1][1] * c[2][0] * c[3][3] + c[0][1] * c[1][2] * c[2][0] * c[3][3] + c[0][2] * c[1][0] * c[2][1] * c[3][3] - c[0][0] * c[1][2] * c[2][1] * c[3][3] - c[0][1] * c[1][0] * c[2][2] * c[3][3] + c[0][0] * c[1][1] * c[2][2] * c[3][3];
+        return c[0][3] * c[1][2] * c[2][1] * c[3][0] - c[0][2] * c[1][3] * c[2][1] * c[3][0] -
+               c[0][3] * c[1][1] * c[2][2] * c[3][0] + c[0][1] * c[1][3] * c[2][2] * c[3][0] +
+               c[0][2] * c[1][1] * c[2][3] * c[3][0] - c[0][1] * c[1][2] * c[2][3] * c[3][0] -
+               c[0][3] * c[1][2] * c[2][0] * c[3][1] + c[0][2] * c[1][3] * c[2][0] * c[3][1] +
+               c[0][3] * c[1][0] * c[2][2] * c[3][1] - c[0][0] * c[1][3] * c[2][2] * c[3][1] -
+               c[0][2] * c[1][0] * c[2][3] * c[3][1] + c[0][0] * c[1][2] * c[2][3] * c[3][1] +
+               c[0][3] * c[1][1] * c[2][0] * c[3][2] - c[0][1] * c[1][3] * c[2][0] * c[3][2] -
+               c[0][3] * c[1][0] * c[2][1] * c[3][2] + c[0][0] * c[1][3] * c[2][1] * c[3][2] +
+               c[0][1] * c[1][0] * c[2][3] * c[3][2] - c[0][0] * c[1][1] * c[2][3] * c[3][2] -
+               c[0][2] * c[1][1] * c[2][0] * c[3][3] + c[0][1] * c[1][2] * c[2][0] * c[3][3] +
+               c[0][2] * c[1][0] * c[2][1] * c[3][3] - c[0][0] * c[1][2] * c[2][1] * c[3][3] -
+               c[0][1] * c[1][0] * c[2][2] * c[3][3] + c[0][0] * c[1][1] * c[2][2] * c[3][3];
     }
 
     Mat4 inverted() const
@@ -1288,49 +1289,75 @@ struct Mat4
         Mat4 m(NO_INIT);
 
         float d = determinant();
-        if (d == 0)
-            return m;
+        if (d == 0) return m;
         d = 1.0f / d;
 
-        m.c[0][0] = d * (c[1][2] * c[2][3] * c[3][1] - c[1][3] * c[2][2] * c[3][1] + c[1][3] * c[2][1] * c[3][2] - c[1][1] * c[2][3] * c[3][2] - c[1][2] * c[2][1] * c[3][3] + c[1][1] * c[2][2] * c[3][3]);
-        m.c[0][1] = d * (c[0][3] * c[2][2] * c[3][1] - c[0][2] * c[2][3] * c[3][1] - c[0][3] * c[2][1] * c[3][2] + c[0][1] * c[2][3] * c[3][2] + c[0][2] * c[2][1] * c[3][3] - c[0][1] * c[2][2] * c[3][3]);
-        m.c[0][2] = d * (c[0][2] * c[1][3] * c[3][1] - c[0][3] * c[1][2] * c[3][1] + c[0][3] * c[1][1] * c[3][2] - c[0][1] * c[1][3] * c[3][2] - c[0][2] * c[1][1] * c[3][3] + c[0][1] * c[1][2] * c[3][3]);
-        m.c[0][3] = d * (c[0][3] * c[1][2] * c[2][1] - c[0][2] * c[1][3] * c[2][1] - c[0][3] * c[1][1] * c[2][2] + c[0][1] * c[1][3] * c[2][2] + c[0][2] * c[1][1] * c[2][3] - c[0][1] * c[1][2] * c[2][3]);
-        m.c[1][0] = d * (c[1][3] * c[2][2] * c[3][0] - c[1][2] * c[2][3] * c[3][0] - c[1][3] * c[2][0] * c[3][2] + c[1][0] * c[2][3] * c[3][2] + c[1][2] * c[2][0] * c[3][3] - c[1][0] * c[2][2] * c[3][3]);
-        m.c[1][1] = d * (c[0][2] * c[2][3] * c[3][0] - c[0][3] * c[2][2] * c[3][0] + c[0][3] * c[2][0] * c[3][2] - c[0][0] * c[2][3] * c[3][2] - c[0][2] * c[2][0] * c[3][3] + c[0][0] * c[2][2] * c[3][3]);
-        m.c[1][2] = d * (c[0][3] * c[1][2] * c[3][0] - c[0][2] * c[1][3] * c[3][0] - c[0][3] * c[1][0] * c[3][2] + c[0][0] * c[1][3] * c[3][2] + c[0][2] * c[1][0] * c[3][3] - c[0][0] * c[1][2] * c[3][3]);
-        m.c[1][3] = d * (c[0][2] * c[1][3] * c[2][0] - c[0][3] * c[1][2] * c[2][0] + c[0][3] * c[1][0] * c[2][2] - c[0][0] * c[1][3] * c[2][2] - c[0][2] * c[1][0] * c[2][3] + c[0][0] * c[1][2] * c[2][3]);
-        m.c[2][0] = d * (c[1][1] * c[2][3] * c[3][0] - c[1][3] * c[2][1] * c[3][0] + c[1][3] * c[2][0] * c[3][1] - c[1][0] * c[2][3] * c[3][1] - c[1][1] * c[2][0] * c[3][3] + c[1][0] * c[2][1] * c[3][3]);
-        m.c[2][1] = d * (c[0][3] * c[2][1] * c[3][0] - c[0][1] * c[2][3] * c[3][0] - c[0][3] * c[2][0] * c[3][1] + c[0][0] * c[2][3] * c[3][1] + c[0][1] * c[2][0] * c[3][3] - c[0][0] * c[2][1] * c[3][3]);
-        m.c[2][2] = d * (c[0][1] * c[1][3] * c[3][0] - c[0][3] * c[1][1] * c[3][0] + c[0][3] * c[1][0] * c[3][1] - c[0][0] * c[1][3] * c[3][1] - c[0][1] * c[1][0] * c[3][3] + c[0][0] * c[1][1] * c[3][3]);
-        m.c[2][3] = d * (c[0][3] * c[1][1] * c[2][0] - c[0][1] * c[1][3] * c[2][0] - c[0][3] * c[1][0] * c[2][1] + c[0][0] * c[1][3] * c[2][1] + c[0][1] * c[1][0] * c[2][3] - c[0][0] * c[1][1] * c[2][3]);
-        m.c[3][0] = d * (c[1][2] * c[2][1] * c[3][0] - c[1][1] * c[2][2] * c[3][0] - c[1][2] * c[2][0] * c[3][1] + c[1][0] * c[2][2] * c[3][1] + c[1][1] * c[2][0] * c[3][2] - c[1][0] * c[2][1] * c[3][2]);
-        m.c[3][1] = d * (c[0][1] * c[2][2] * c[3][0] - c[0][2] * c[2][1] * c[3][0] + c[0][2] * c[2][0] * c[3][1] - c[0][0] * c[2][2] * c[3][1] - c[0][1] * c[2][0] * c[3][2] + c[0][0] * c[2][1] * c[3][2]);
-        m.c[3][2] = d * (c[0][2] * c[1][1] * c[3][0] - c[0][1] * c[1][2] * c[3][0] - c[0][2] * c[1][0] * c[3][1] + c[0][0] * c[1][2] * c[3][1] + c[0][1] * c[1][0] * c[3][2] - c[0][0] * c[1][1] * c[3][2]);
-        m.c[3][3] = d * (c[0][1] * c[1][2] * c[2][0] - c[0][2] * c[1][1] * c[2][0] + c[0][2] * c[1][0] * c[2][1] - c[0][0] * c[1][2] * c[2][1] - c[0][1] * c[1][0] * c[2][2] + c[0][0] * c[1][1] * c[2][2]);
+        m.c[0][0] = d * (c[1][2] * c[2][3] * c[3][1] - c[1][3] * c[2][2] * c[3][1] +
+                         c[1][3] * c[2][1] * c[3][2] - c[1][1] * c[2][3] * c[3][2] -
+                         c[1][2] * c[2][1] * c[3][3] + c[1][1] * c[2][2] * c[3][3]);
+        m.c[0][1] = d * (c[0][3] * c[2][2] * c[3][1] - c[0][2] * c[2][3] * c[3][1] -
+                         c[0][3] * c[2][1] * c[3][2] + c[0][1] * c[2][3] * c[3][2] +
+                         c[0][2] * c[2][1] * c[3][3] - c[0][1] * c[2][2] * c[3][3]);
+        m.c[0][2] = d * (c[0][2] * c[1][3] * c[3][1] - c[0][3] * c[1][2] * c[3][1] +
+                         c[0][3] * c[1][1] * c[3][2] - c[0][1] * c[1][3] * c[3][2] -
+                         c[0][2] * c[1][1] * c[3][3] + c[0][1] * c[1][2] * c[3][3]);
+        m.c[0][3] = d * (c[0][3] * c[1][2] * c[2][1] - c[0][2] * c[1][3] * c[2][1] -
+                         c[0][3] * c[1][1] * c[2][2] + c[0][1] * c[1][3] * c[2][2] +
+                         c[0][2] * c[1][1] * c[2][3] - c[0][1] * c[1][2] * c[2][3]);
+        m.c[1][0] = d * (c[1][3] * c[2][2] * c[3][0] - c[1][2] * c[2][3] * c[3][0] -
+                         c[1][3] * c[2][0] * c[3][2] + c[1][0] * c[2][3] * c[3][2] +
+                         c[1][2] * c[2][0] * c[3][3] - c[1][0] * c[2][2] * c[3][3]);
+        m.c[1][1] = d * (c[0][2] * c[2][3] * c[3][0] - c[0][3] * c[2][2] * c[3][0] +
+                         c[0][3] * c[2][0] * c[3][2] - c[0][0] * c[2][3] * c[3][2] -
+                         c[0][2] * c[2][0] * c[3][3] + c[0][0] * c[2][2] * c[3][3]);
+        m.c[1][2] = d * (c[0][3] * c[1][2] * c[3][0] - c[0][2] * c[1][3] * c[3][0] -
+                         c[0][3] * c[1][0] * c[3][2] + c[0][0] * c[1][3] * c[3][2] +
+                         c[0][2] * c[1][0] * c[3][3] - c[0][0] * c[1][2] * c[3][3]);
+        m.c[1][3] = d * (c[0][2] * c[1][3] * c[2][0] - c[0][3] * c[1][2] * c[2][0] +
+                         c[0][3] * c[1][0] * c[2][2] - c[0][0] * c[1][3] * c[2][2] -
+                         c[0][2] * c[1][0] * c[2][3] + c[0][0] * c[1][2] * c[2][3]);
+        m.c[2][0] = d * (c[1][1] * c[2][3] * c[3][0] - c[1][3] * c[2][1] * c[3][0] +
+                         c[1][3] * c[2][0] * c[3][1] - c[1][0] * c[2][3] * c[3][1] -
+                         c[1][1] * c[2][0] * c[3][3] + c[1][0] * c[2][1] * c[3][3]);
+        m.c[2][1] = d * (c[0][3] * c[2][1] * c[3][0] - c[0][1] * c[2][3] * c[3][0] -
+                         c[0][3] * c[2][0] * c[3][1] + c[0][0] * c[2][3] * c[3][1] +
+                         c[0][1] * c[2][0] * c[3][3] - c[0][0] * c[2][1] * c[3][3]);
+        m.c[2][2] = d * (c[0][1] * c[1][3] * c[3][0] - c[0][3] * c[1][1] * c[3][0] +
+                         c[0][3] * c[1][0] * c[3][1] - c[0][0] * c[1][3] * c[3][1] -
+                         c[0][1] * c[1][0] * c[3][3] + c[0][0] * c[1][1] * c[3][3]);
+        m.c[2][3] = d * (c[0][3] * c[1][1] * c[2][0] - c[0][1] * c[1][3] * c[2][0] -
+                         c[0][3] * c[1][0] * c[2][1] + c[0][0] * c[1][3] * c[2][1] +
+                         c[0][1] * c[1][0] * c[2][3] - c[0][0] * c[1][1] * c[2][3]);
+        m.c[3][0] = d * (c[1][2] * c[2][1] * c[3][0] - c[1][1] * c[2][2] * c[3][0] -
+                         c[1][2] * c[2][0] * c[3][1] + c[1][0] * c[2][2] * c[3][1] +
+                         c[1][1] * c[2][0] * c[3][2] - c[1][0] * c[2][1] * c[3][2]);
+        m.c[3][1] = d * (c[0][1] * c[2][2] * c[3][0] - c[0][2] * c[2][1] * c[3][0] +
+                         c[0][2] * c[2][0] * c[3][1] - c[0][0] * c[2][2] * c[3][1] -
+                         c[0][1] * c[2][0] * c[3][2] + c[0][0] * c[2][1] * c[3][2]);
+        m.c[3][2] = d * (c[0][2] * c[1][1] * c[3][0] - c[0][1] * c[1][2] * c[3][0] -
+                         c[0][2] * c[1][0] * c[3][1] + c[0][0] * c[1][2] * c[3][1] +
+                         c[0][1] * c[1][0] * c[3][2] - c[0][0] * c[1][1] * c[3][2]);
+        m.c[3][3] = d * (c[0][1] * c[1][2] * c[2][0] - c[0][2] * c[1][1] * c[2][0] +
+                         c[0][2] * c[1][0] * c[2][1] - c[0][0] * c[1][2] * c[2][1] -
+                         c[0][1] * c[1][0] * c[2][2] + c[0][0] * c[1][1] * c[2][2]);
 
         return m;
     }
 
-    void decompose(Vec3 &trans, Vec3 &rot, Vec3 &scale) const
+    void decompose(Vec3& trans, Vec3& rot, Vec3& scale) const
     {
         // Getting translation is trivial
         trans = Vec3(c[3][0], c[3][1], c[3][2]);
 
         // Scale is length of columns
-        scale.x =
-            sqrtf(c[0][0] * c[0][0] + c[0][1] * c[0][1] + c[0][2] * c[0][2]);
-        scale.y =
-            sqrtf(c[1][0] * c[1][0] + c[1][1] * c[1][1] + c[1][2] * c[1][2]);
-        scale.z =
-            sqrtf(c[2][0] * c[2][0] + c[2][1] * c[2][1] + c[2][2] * c[2][2]);
+        scale.x = sqrtf(c[0][0] * c[0][0] + c[0][1] * c[0][1] + c[0][2] * c[0][2]);
+        scale.y = sqrtf(c[1][0] * c[1][0] + c[1][1] * c[1][1] + c[1][2] * c[1][2]);
+        scale.z = sqrtf(c[2][0] * c[2][0] + c[2][1] * c[2][1] + c[2][2] * c[2][2]);
 
-        if (scale.x == 0 || scale.y == 0 || scale.z == 0)
-            return;
+        if (scale.x == 0 || scale.y == 0 || scale.z == 0) return;
 
         // Detect negative scale with determinant and flip one arbitrary axis
-        if (determinant() < 0)
-            scale.x = -scale.x;
+        if (determinant() < 0) scale.x = -scale.x;
 
         // Combined rotation matrix YXZ
         //
@@ -1361,7 +1388,7 @@ struct Mat4
         }
     }
 
-    void setCol(unsigned int col, const Vec4 &v)
+    void setCol(unsigned int col, const Vec4& v)
     {
         x[col * 4 + 0] = v.x;
         x[col * 4 + 1] = v.y;
@@ -1371,8 +1398,7 @@ struct Mat4
 
     Vec4 getCol(unsigned int col) const
     {
-        return Vec4(x[col * 4 + 0], x[col * 4 + 1], x[col * 4 + 2],
-                    x[col * 4 + 3]);
+        return Vec4(x[col * 4 + 0], x[col * 4 + 1], x[col * 4 + 2], x[col * 4 + 3]);
     }
 
     Vec4 getRow(unsigned int row) const
@@ -1386,12 +1412,9 @@ struct Mat4
     {
         Vec3 scale;
         // Scale is length of columns
-        scale.x =
-            sqrtf(c[0][0] * c[0][0] + c[0][1] * c[0][1] + c[0][2] * c[0][2]);
-        scale.y =
-            sqrtf(c[1][0] * c[1][0] + c[1][1] * c[1][1] + c[1][2] * c[1][2]);
-        scale.z =
-            sqrtf(c[2][0] * c[2][0] + c[2][1] * c[2][1] + c[2][2] * c[2][2]);
+        scale.x = sqrtf(c[0][0] * c[0][0] + c[0][1] * c[0][1] + c[0][2] * c[0][2]);
+        scale.y = sqrtf(c[1][0] * c[1][0] + c[1][1] * c[1][1] + c[1][2] * c[1][2]);
+        scale.z = sqrtf(c[2][0] * c[2][0] + c[2][1] * c[2][1] + c[2][2] * c[2][2]);
         return scale;
     }
     void identity()
@@ -1413,28 +1436,27 @@ struct Mat4
         c[2][3] = 0;
         c[3][3] = 1;
     }
-    static Vec3 Transform(const Mat4 &m, const Vec3 &v)
+    static Vec3 Transform(const Mat4& m, const Vec3& v)
     {
-        return Vec3(
-            v.x * m.c[0][0] + v.y * m.c[1][0] + v.z * m.c[2][0] + m.c[3][0],
-            v.x * m.c[0][1] + v.y * m.c[1][1] + v.z * m.c[2][1] + m.c[3][1],
-            v.x * m.c[0][2] + v.y * m.c[1][2] + v.z * m.c[2][2] + m.c[3][2]);
+        return Vec3(v.x * m.c[0][0] + v.y * m.c[1][0] + v.z * m.c[2][0] + m.c[3][0],
+                    v.x * m.c[0][1] + v.y * m.c[1][1] + v.z * m.c[2][1] + m.c[3][1],
+                    v.x * m.c[0][2] + v.y * m.c[1][2] + v.z * m.c[2][2] + m.c[3][2]);
     }
 
-    static void Transform(const Mat4 &m, const Vec3 &v, Vec3 &out)
+    static void Transform(const Mat4& m, const Vec3& v, Vec3& out)
     {
         out.x = v.x * m.c[0][0] + v.y * m.c[1][0] + v.z * m.c[2][0] + m.c[3][0];
         out.y = v.x * m.c[0][1] + v.y * m.c[1][1] + v.z * m.c[2][1] + m.c[3][1];
         out.z = v.x * m.c[0][2] + v.y * m.c[1][2] + v.z * m.c[2][2] + m.c[3][2];
     }
 
-    static Vec3 TransformNormal(const Mat4 &m, const Vec3 &v)
+    static Vec3 TransformNormal(const Mat4& m, const Vec3& v)
     {
         return Vec3(v.x * m.c[0][0] + v.y * m.c[1][0] + v.z * m.c[2][0],
                     v.x * m.c[0][1] + v.y * m.c[1][1] + v.z * m.c[2][1],
                     v.x * m.c[0][2] + v.y * m.c[1][2] + v.z * m.c[2][2]);
     }
-    static Mat4 NormalMatrix(const Mat4 &model)
+    static Mat4 NormalMatrix(const Mat4& model)
     {
         // inverse-transpose do bloco 3x3, devolvido em 4x4 com última
         // linha/coluna [0,0,0,1]
@@ -1446,30 +1468,77 @@ struct Mat4
         return n;
     }
 
-    static Mat4 Inverse(const Mat4 &mat)
+    static Mat4 Inverse(const Mat4& mat)
     {
         Mat4 m(NO_INIT);
         float d = mat.determinant();
-        if (d == 0)
-            return m;
+        if (d == 0) return m;
         d = 1.0f / d;
 
-        m.c[0][0] = d * (mat.c[1][2] * mat.c[2][3] * mat.c[3][1] - mat.c[1][3] * mat.c[2][2] * mat.c[3][1] + mat.c[1][3] * mat.c[2][1] * mat.c[3][2] - mat.c[1][1] * mat.c[2][3] * mat.c[3][2] - mat.c[1][2] * mat.c[2][1] * mat.c[3][3] + mat.c[1][1] * mat.c[2][2] * mat.c[3][3]);
-        m.c[0][1] = d * (mat.c[0][3] * mat.c[2][2] * mat.c[3][1] - mat.c[0][2] * mat.c[2][3] * mat.c[3][1] - mat.c[0][3] * mat.c[2][1] * mat.c[3][2] + mat.c[0][1] * mat.c[2][3] * mat.c[3][2] + mat.c[0][2] * mat.c[2][1] * mat.c[3][3] - mat.c[0][1] * mat.c[2][2] * mat.c[3][3]);
-        m.c[0][2] = d * (mat.c[0][2] * mat.c[1][3] * mat.c[3][1] - mat.c[0][3] * mat.c[1][2] * mat.c[3][1] + mat.c[0][3] * mat.c[1][1] * mat.c[3][2] - mat.c[0][1] * mat.c[1][3] * mat.c[3][2] - mat.c[0][2] * mat.c[1][1] * mat.c[3][3] + mat.c[0][1] * mat.c[1][2] * mat.c[3][3]);
-        m.c[0][3] = d * (mat.c[0][3] * mat.c[1][2] * mat.c[2][1] - mat.c[0][2] * mat.c[1][3] * mat.c[2][1] - mat.c[0][3] * mat.c[1][1] * mat.c[2][2] + mat.c[0][1] * mat.c[1][3] * mat.c[2][2] + mat.c[0][2] * mat.c[1][1] * mat.c[2][3] - mat.c[0][1] * mat.c[1][2] * mat.c[2][3]);
-        m.c[1][0] = d * (mat.c[1][3] * mat.c[2][2] * mat.c[3][0] - mat.c[1][2] * mat.c[2][3] * mat.c[3][0] - mat.c[1][3] * mat.c[2][0] * mat.c[3][2] + mat.c[1][0] * mat.c[2][3] * mat.c[3][2] + mat.c[1][2] * mat.c[2][0] * mat.c[3][3] - mat.c[1][0] * mat.c[2][2] * mat.c[3][3]);
-        m.c[1][1] = d * (mat.c[0][2] * mat.c[2][3] * mat.c[3][0] - mat.c[0][3] * mat.c[2][2] * mat.c[3][0] + mat.c[0][3] * mat.c[2][0] * mat.c[3][2] - mat.c[0][0] * mat.c[2][3] * mat.c[3][2] - mat.c[0][2] * mat.c[2][0] * mat.c[3][3] + mat.c[0][0] * mat.c[2][2] * mat.c[3][3]);
-        m.c[1][2] = d * (mat.c[0][3] * mat.c[1][2] * mat.c[3][0] - mat.c[0][2] * mat.c[1][3] * mat.c[3][0] - mat.c[0][3] * mat.c[1][0] * mat.c[3][2] + mat.c[0][0] * mat.c[1][3] * mat.c[3][2] + mat.c[0][2] * mat.c[1][0] * mat.c[3][3] - mat.c[0][0] * mat.c[1][2] * mat.c[3][3]);
-        m.c[1][3] = d * (mat.c[0][2] * mat.c[1][3] * mat.c[2][0] - mat.c[0][3] * mat.c[1][2] * mat.c[2][0] + mat.c[0][3] * mat.c[1][0] * mat.c[2][2] - mat.c[0][0] * mat.c[1][3] * mat.c[2][2] - mat.c[0][2] * mat.c[1][0] * mat.c[2][3] + mat.c[0][0] * mat.c[1][2] * mat.c[2][3]);
-        m.c[2][0] = d * (mat.c[1][1] * mat.c[2][3] * mat.c[3][0] - mat.c[1][3] * mat.c[2][1] * mat.c[3][0] + mat.c[1][3] * mat.c[2][0] * mat.c[3][1] - mat.c[1][0] * mat.c[2][3] * mat.c[3][1] - mat.c[1][1] * mat.c[2][0] * mat.c[3][3] + mat.c[1][0] * mat.c[2][1] * mat.c[3][3]);
-        m.c[2][1] = d * (mat.c[0][3] * mat.c[2][1] * mat.c[3][0] - mat.c[0][1] * mat.c[2][3] * mat.c[3][0] - mat.c[0][3] * mat.c[2][0] * mat.c[3][1] + mat.c[0][0] * mat.c[2][3] * mat.c[3][1] + mat.c[0][1] * mat.c[2][0] * mat.c[3][3] - mat.c[0][0] * mat.c[2][1] * mat.c[3][3]);
-        m.c[2][2] = d * (mat.c[0][1] * mat.c[1][3] * mat.c[3][0] - mat.c[0][3] * mat.c[1][1] * mat.c[3][0] + mat.c[0][3] * mat.c[1][0] * mat.c[3][1] - mat.c[0][0] * mat.c[1][3] * mat.c[3][1] - mat.c[0][1] * mat.c[1][0] * mat.c[3][3] + mat.c[0][0] * mat.c[1][1] * mat.c[3][3]);
-        m.c[2][3] = d * (mat.c[0][3] * mat.c[1][1] * mat.c[2][0] - mat.c[0][1] * mat.c[1][3] * mat.c[2][0] - mat.c[0][3] * mat.c[1][0] * mat.c[2][1] + mat.c[0][0] * mat.c[1][3] * mat.c[2][1] + mat.c[0][1] * mat.c[1][0] * mat.c[2][3] - mat.c[0][0] * mat.c[1][1] * mat.c[2][3]);
-        m.c[3][0] = d * (mat.c[1][2] * mat.c[2][1] * mat.c[3][0] - mat.c[1][1] * mat.c[2][2] * mat.c[3][0] - mat.c[1][2] * mat.c[2][0] * mat.c[3][1] + mat.c[1][0] * mat.c[2][2] * mat.c[3][1] + mat.c[1][1] * mat.c[2][0] * mat.c[3][2] - mat.c[1][0] * mat.c[2][1] * mat.c[3][2]);
-        m.c[3][1] = d * (mat.c[0][1] * mat.c[2][2] * mat.c[3][0] - mat.c[0][2] * mat.c[2][1] * mat.c[3][0] + mat.c[0][2] * mat.c[2][0] * mat.c[3][1] - mat.c[0][0] * mat.c[2][2] * mat.c[3][1] - mat.c[0][1] * mat.c[2][0] * mat.c[3][2] + mat.c[0][0] * mat.c[2][1] * mat.c[3][2]);
-        m.c[3][2] = d * (mat.c[0][2] * mat.c[1][1] * mat.c[3][0] - mat.c[0][1] * mat.c[1][2] * mat.c[3][0] - mat.c[0][2] * mat.c[1][0] * mat.c[3][1] + mat.c[0][0] * mat.c[1][2] * mat.c[3][1] + mat.c[0][1] * mat.c[1][0] * mat.c[3][2] - mat.c[0][0] * mat.c[1][1] * mat.c[3][2]);
-        m.c[3][3] = d * (mat.c[0][1] * mat.c[1][2] * mat.c[2][0] - mat.c[0][2] * mat.c[1][1] * mat.c[2][0] + mat.c[0][2] * mat.c[1][0] * mat.c[2][1] - mat.c[0][0] * mat.c[1][2] * mat.c[2][1] - mat.c[0][1] * mat.c[1][0] * mat.c[2][2] + mat.c[0][0] * mat.c[1][1] * mat.c[2][2]);
+        m.c[0][0] =
+            d * (mat.c[1][2] * mat.c[2][3] * mat.c[3][1] - mat.c[1][3] * mat.c[2][2] * mat.c[3][1] +
+                 mat.c[1][3] * mat.c[2][1] * mat.c[3][2] - mat.c[1][1] * mat.c[2][3] * mat.c[3][2] -
+                 mat.c[1][2] * mat.c[2][1] * mat.c[3][3] + mat.c[1][1] * mat.c[2][2] * mat.c[3][3]);
+        m.c[0][1] =
+            d * (mat.c[0][3] * mat.c[2][2] * mat.c[3][1] - mat.c[0][2] * mat.c[2][3] * mat.c[3][1] -
+                 mat.c[0][3] * mat.c[2][1] * mat.c[3][2] + mat.c[0][1] * mat.c[2][3] * mat.c[3][2] +
+                 mat.c[0][2] * mat.c[2][1] * mat.c[3][3] - mat.c[0][1] * mat.c[2][2] * mat.c[3][3]);
+        m.c[0][2] =
+            d * (mat.c[0][2] * mat.c[1][3] * mat.c[3][1] - mat.c[0][3] * mat.c[1][2] * mat.c[3][1] +
+                 mat.c[0][3] * mat.c[1][1] * mat.c[3][2] - mat.c[0][1] * mat.c[1][3] * mat.c[3][2] -
+                 mat.c[0][2] * mat.c[1][1] * mat.c[3][3] + mat.c[0][1] * mat.c[1][2] * mat.c[3][3]);
+        m.c[0][3] =
+            d * (mat.c[0][3] * mat.c[1][2] * mat.c[2][1] - mat.c[0][2] * mat.c[1][3] * mat.c[2][1] -
+                 mat.c[0][3] * mat.c[1][1] * mat.c[2][2] + mat.c[0][1] * mat.c[1][3] * mat.c[2][2] +
+                 mat.c[0][2] * mat.c[1][1] * mat.c[2][3] - mat.c[0][1] * mat.c[1][2] * mat.c[2][3]);
+        m.c[1][0] =
+            d * (mat.c[1][3] * mat.c[2][2] * mat.c[3][0] - mat.c[1][2] * mat.c[2][3] * mat.c[3][0] -
+                 mat.c[1][3] * mat.c[2][0] * mat.c[3][2] + mat.c[1][0] * mat.c[2][3] * mat.c[3][2] +
+                 mat.c[1][2] * mat.c[2][0] * mat.c[3][3] - mat.c[1][0] * mat.c[2][2] * mat.c[3][3]);
+        m.c[1][1] =
+            d * (mat.c[0][2] * mat.c[2][3] * mat.c[3][0] - mat.c[0][3] * mat.c[2][2] * mat.c[3][0] +
+                 mat.c[0][3] * mat.c[2][0] * mat.c[3][2] - mat.c[0][0] * mat.c[2][3] * mat.c[3][2] -
+                 mat.c[0][2] * mat.c[2][0] * mat.c[3][3] + mat.c[0][0] * mat.c[2][2] * mat.c[3][3]);
+        m.c[1][2] =
+            d * (mat.c[0][3] * mat.c[1][2] * mat.c[3][0] - mat.c[0][2] * mat.c[1][3] * mat.c[3][0] -
+                 mat.c[0][3] * mat.c[1][0] * mat.c[3][2] + mat.c[0][0] * mat.c[1][3] * mat.c[3][2] +
+                 mat.c[0][2] * mat.c[1][0] * mat.c[3][3] - mat.c[0][0] * mat.c[1][2] * mat.c[3][3]);
+        m.c[1][3] =
+            d * (mat.c[0][2] * mat.c[1][3] * mat.c[2][0] - mat.c[0][3] * mat.c[1][2] * mat.c[2][0] +
+                 mat.c[0][3] * mat.c[1][0] * mat.c[2][2] - mat.c[0][0] * mat.c[1][3] * mat.c[2][2] -
+                 mat.c[0][2] * mat.c[1][0] * mat.c[2][3] + mat.c[0][0] * mat.c[1][2] * mat.c[2][3]);
+        m.c[2][0] =
+            d * (mat.c[1][1] * mat.c[2][3] * mat.c[3][0] - mat.c[1][3] * mat.c[2][1] * mat.c[3][0] +
+                 mat.c[1][3] * mat.c[2][0] * mat.c[3][1] - mat.c[1][0] * mat.c[2][3] * mat.c[3][1] -
+                 mat.c[1][1] * mat.c[2][0] * mat.c[3][3] + mat.c[1][0] * mat.c[2][1] * mat.c[3][3]);
+        m.c[2][1] =
+            d * (mat.c[0][3] * mat.c[2][1] * mat.c[3][0] - mat.c[0][1] * mat.c[2][3] * mat.c[3][0] -
+                 mat.c[0][3] * mat.c[2][0] * mat.c[3][1] + mat.c[0][0] * mat.c[2][3] * mat.c[3][1] +
+                 mat.c[0][1] * mat.c[2][0] * mat.c[3][3] - mat.c[0][0] * mat.c[2][1] * mat.c[3][3]);
+        m.c[2][2] =
+            d * (mat.c[0][1] * mat.c[1][3] * mat.c[3][0] - mat.c[0][3] * mat.c[1][1] * mat.c[3][0] +
+                 mat.c[0][3] * mat.c[1][0] * mat.c[3][1] - mat.c[0][0] * mat.c[1][3] * mat.c[3][1] -
+                 mat.c[0][1] * mat.c[1][0] * mat.c[3][3] + mat.c[0][0] * mat.c[1][1] * mat.c[3][3]);
+        m.c[2][3] =
+            d * (mat.c[0][3] * mat.c[1][1] * mat.c[2][0] - mat.c[0][1] * mat.c[1][3] * mat.c[2][0] -
+                 mat.c[0][3] * mat.c[1][0] * mat.c[2][1] + mat.c[0][0] * mat.c[1][3] * mat.c[2][1] +
+                 mat.c[0][1] * mat.c[1][0] * mat.c[2][3] - mat.c[0][0] * mat.c[1][1] * mat.c[2][3]);
+        m.c[3][0] =
+            d * (mat.c[1][2] * mat.c[2][1] * mat.c[3][0] - mat.c[1][1] * mat.c[2][2] * mat.c[3][0] -
+                 mat.c[1][2] * mat.c[2][0] * mat.c[3][1] + mat.c[1][0] * mat.c[2][2] * mat.c[3][1] +
+                 mat.c[1][1] * mat.c[2][0] * mat.c[3][2] - mat.c[1][0] * mat.c[2][1] * mat.c[3][2]);
+        m.c[3][1] =
+            d * (mat.c[0][1] * mat.c[2][2] * mat.c[3][0] - mat.c[0][2] * mat.c[2][1] * mat.c[3][0] +
+                 mat.c[0][2] * mat.c[2][0] * mat.c[3][1] - mat.c[0][0] * mat.c[2][2] * mat.c[3][1] -
+                 mat.c[0][1] * mat.c[2][0] * mat.c[3][2] + mat.c[0][0] * mat.c[2][1] * mat.c[3][2]);
+        m.c[3][2] =
+            d * (mat.c[0][2] * mat.c[1][1] * mat.c[3][0] - mat.c[0][1] * mat.c[1][2] * mat.c[3][0] -
+                 mat.c[0][2] * mat.c[1][0] * mat.c[3][1] + mat.c[0][0] * mat.c[1][2] * mat.c[3][1] +
+                 mat.c[0][1] * mat.c[1][0] * mat.c[3][2] - mat.c[0][0] * mat.c[1][1] * mat.c[3][2]);
+        m.c[3][3] =
+            d * (mat.c[0][1] * mat.c[1][2] * mat.c[2][0] - mat.c[0][2] * mat.c[1][1] * mat.c[2][0] +
+                 mat.c[0][2] * mat.c[1][0] * mat.c[2][1] - mat.c[0][0] * mat.c[1][2] * mat.c[2][1] -
+                 mat.c[0][1] * mat.c[1][0] * mat.c[2][2] + mat.c[0][0] * mat.c[1][1] * mat.c[2][2]);
 
         return m;
     }
@@ -1513,7 +1582,7 @@ struct Mat3
     }
 
     // Rodrigues (eixo unitário)
-    static Mat3 Rotate(const Vec3 &axisRaw, float angle)
+    static Mat3 Rotate(const Vec3& axisRaw, float angle)
     {
         Vec3 axis = axisRaw.normalized();
         const float s = sinf(angle), c = cosf(angle), t = 1.0f - c;
@@ -1536,7 +1605,7 @@ struct Mat3
     }
 
     // extrai a 3x3 de um Mat4 (top-left)
-    static Mat3 FromMat4(const Mat4 &M)
+    static Mat3 FromMat4(const Mat4& M)
     {
         Mat3 m(NO_INIT);
         m.c[0][0] = M.c[0][0];
@@ -1552,13 +1621,13 @@ struct Mat3
     }
 
     // normal matrix (inverse-transpose 3x3)
-    static Mat3 NormalMatrix(const Mat4 &model)
+    static Mat3 NormalMatrix(const Mat4& model)
     {
         Mat3 A = FromMat4(model);
         return A.inverted().transposed();
     }
 
-    static Mat3 FromColumns(const Vec3 &c0, const Vec3 &c1, const Vec3 &c2)
+    static Mat3 FromColumns(const Vec3& c0, const Vec3& c1, const Vec3& c2)
     {
         Mat3 m(NO_INIT);
         m.c[0][0] = c0.x;
@@ -1573,7 +1642,7 @@ struct Mat3
         return m;
     }
 
-    static Mat3 FromRows(const Vec3 &r0, const Vec3 &r1, const Vec3 &r2)
+    static Mat3 FromRows(const Vec3& r0, const Vec3& r1, const Vec3& r2)
     {
         Mat3 m(NO_INIT);
         m.c[0][0] = r0.x;
@@ -1591,7 +1660,7 @@ struct Mat3
     // --- Ctors ---
     Mat3() { *this = Identity(); }
     explicit Mat3(NoInitHint) {} // sem init
-    explicit Mat3(const float *a9)
+    explicit Mat3(const float* a9)
     { // column-major
         for (int i = 0; i < 9; ++i)
             x[i] = a9[i];
@@ -1621,7 +1690,8 @@ struct Mat3
         const float a00 = c[0][0], a01 = c[1][0], a02 = c[2][0];
         const float a10 = c[0][1], a11 = c[1][1], a12 = c[2][1];
         const float a20 = c[0][2], a21 = c[1][2], a22 = c[2][2];
-        return a00 * (a11 * a22 - a21 * a12) - a01 * (a10 * a22 - a20 * a12) + a02 * (a10 * a21 - a20 * a11);
+        return a00 * (a11 * a22 - a21 * a12) - a01 * (a10 * a22 - a20 * a12) +
+               a02 * (a10 * a21 - a20 * a11);
     }
 
     Mat3 inverted() const
@@ -1642,8 +1712,7 @@ struct Mat3
         const float b22 = a00 * a11 - a01 * a10;
 
         const float det = a00 * b00 + a01 * b10 + a02 * b20;
-        if (fabsf(det) < 1e-20f)
-            return r; // devolve lixo não inicializado ( Mat4::inverted)
+        if (fabsf(det) < 1e-20f) return r; // devolve lixo não inicializado ( Mat4::inverted)
 
         const float invDet = 1.0f / det;
 
@@ -1661,7 +1730,7 @@ struct Mat3
     }
 
     // --- Multiplicações ---
-    Mat3 operator*(const Mat3 &m) const
+    Mat3 operator*(const Mat3& m) const
     {
         Mat3 r(NO_INIT);
         // r = this * m  (column-major)
@@ -1688,7 +1757,7 @@ struct Mat3
     }
 
     // aplica 3x3 (sem translação)
-    Vec3 operator*(const Vec3 &v) const
+    Vec3 operator*(const Vec3& v) const
     {
         return Vec3(v.x * c[0][0] + v.y * c[1][0] + v.z * c[2][0],
                     v.x * c[0][1] + v.y * c[1][1] + v.z * c[2][1],
@@ -1696,20 +1765,14 @@ struct Mat3
     }
 
     // --- utilidades ---
-    void setCol(unsigned col, const Vec3 &v)
+    void setCol(unsigned col, const Vec3& v)
     {
         x[col * 3 + 0] = v.x;
         x[col * 3 + 1] = v.y;
         x[col * 3 + 2] = v.z;
     }
-    Vec3 getCol(unsigned col) const
-    {
-        return Vec3(x[col * 3 + 0], x[col * 3 + 1], x[col * 3 + 2]);
-    }
-    Vec3 getRow(unsigned row) const
-    {
-        return Vec3(x[row + 0], x[row + 3], x[row + 6]);
-    }
+    Vec3 getCol(unsigned col) const { return Vec3(x[col * 3 + 0], x[col * 3 + 1], x[col * 3 + 2]); }
+    Vec3 getRow(unsigned row) const { return Vec3(x[row + 0], x[row + 3], x[row + 6]); }
 
     // Ortonormaliza colunas (útil para TBN)
     Mat3 orthonormalized() const
@@ -1723,7 +1786,10 @@ struct Mat3
 };
 
 // simétrico: escalar * Mat3
-inline Mat3 operator*(float s, const Mat3 &m) { return m * s; }
+inline Mat3 operator*(float s, const Mat3& m)
+{
+    return m * s;
+}
 
 // -------------------------------------------------------------------------------------------------
 // Ray
@@ -1734,16 +1800,12 @@ struct Ray
     Vec3 direction; // normalizada
 
     Ray() : origin(0, 0, 0), direction(1, 0, 0) {}
-    Ray(const Vec3 &o, const Vec3 &d) : origin(o), direction(d)
-    {
-        direction.normalize();
-    }
+    Ray(const Vec3& o, const Vec3& d) : origin(o), direction(d) { direction.normalize(); }
 
     Vec3 pointAt(float t) const { return origin + direction * t; }
 
     // Interseção raio-triângulo (Möller–Trumbore, non-culling)
-    bool Intersection(const Vec3 &v0, const Vec3 &v1, const Vec3 &v2,
-                      Vec3 &hitPoint) const
+    bool Intersection(const Vec3& v0, const Vec3& v1, const Vec3& v2, Vec3& hitPoint) const
     {
         const float EPS = 1e-8f;
 
@@ -1754,33 +1816,29 @@ struct Ray
         const float det = Vec3::Dot(e1, pvec);
 
         // paralelo ao plano do triângulo
-        if (det > -EPS && det < EPS)
-            return false;
+        if (det > -EPS && det < EPS) return false;
 
         const float invDet = 1.0f / det;
 
         const Vec3 tvec = origin - v0;
 
         const float u = Vec3::Dot(tvec, pvec) * invDet;
-        if (u < 0.0f || u > 1.0f)
-            return false;
+        if (u < 0.0f || u > 1.0f) return false;
 
         const Vec3 qvec = Vec3::Cross(tvec, e1);
         const float v = Vec3::Dot(direction, qvec) * invDet;
-        if (v < 0.0f || (u + v) > 1.0f)
-            return false;
+        if (v < 0.0f || (u + v) > 1.0f) return false;
 
         const float t = Vec3::Dot(e2, qvec) * invDet;
-        if (t < 0.0f)
-            return false; // atrás da origem do raio
+        if (t < 0.0f) return false; // atrás da origem do raio
 
         hitPoint = origin + direction * t;
         return true;
     }
 
     // overload útil: devolve também t (e barycentrics
-    bool Intersection(const Vec3 &v0, const Vec3 &v1, const Vec3 &v2,
-                      float &tOut, float &uOut, float &vOut) const
+    bool Intersection(const Vec3& v0, const Vec3& v1, const Vec3& v2, float& tOut, float& uOut,
+                      float& vOut) const
     {
         const float EPS = 1e-8f;
         const Vec3 e1 = v1 - v0;
@@ -1788,43 +1846,37 @@ struct Ray
 
         const Vec3 pvec = Vec3::Cross(direction, e2);
         const float det = Vec3::Dot(e1, pvec);
-        if (det > -EPS && det < EPS)
-            return false;
+        if (det > -EPS && det < EPS) return false;
 
         const float invDet = 1.0f / det;
         const Vec3 tvec = origin - v0;
 
         const float u = Vec3::Dot(tvec, pvec) * invDet;
-        if (u < 0.0f || u > 1.0f)
-            return false;
+        if (u < 0.0f || u > 1.0f) return false;
 
         const Vec3 qvec = Vec3::Cross(tvec, e1);
         const float v = Vec3::Dot(direction, qvec) * invDet;
-        if (v < 0.0f || (u + v) > 1.0f)
-            return false;
+        if (v < 0.0f || (u + v) > 1.0f) return false;
 
         const float t = Vec3::Dot(e2, qvec) * invDet;
-        if (t < 0.0f)
-            return false;
+        if (t < 0.0f) return false;
 
         tOut = t;
         uOut = u;
         vOut = v;
         return true;
     }
-    bool IntersectSphere(const Vec3 &center, float radius, float &tHit) const
+    bool IntersectSphere(const Vec3& center, float radius, float& tHit) const
     {
         Vec3 oc = origin - center;
         float b = Vec3::Dot(oc, direction);
         float c = Vec3::Dot(oc, oc) - radius * radius;
         float disc = b * b - c;
-        if (disc < 0)
-            return false;
+        if (disc < 0) return false;
         float s = sqrtf(disc);
         float t0 = -b - s, t1 = -b + s;
         float t = (t0 >= 0 ? t0 : t1);
-        if (t < 0)
-            return false;
+        if (t < 0) return false;
         tHit = t;
         return true;
     }
@@ -1838,10 +1890,7 @@ class Plane3D
 {
 
 private:
-    float distToPoint(const Vec3 &point) const
-    {
-        return normal.dot(point) + dist;
-    }
+    float distToPoint(const Vec3& point) const { return normal.dot(point) + dist; }
 
 public:
     Vec3 normal;
@@ -1866,7 +1915,7 @@ public:
         dist = d * invLen;
     }
 
-    Plane3D(const Vec3 &v0, const Vec3 &v1, const Vec3 &v2)
+    Plane3D(const Vec3& v0, const Vec3& v1, const Vec3& v2)
     {
         normal = v1 - v0;
         normal = normal.cross(v2 - v0);
@@ -1874,32 +1923,24 @@ public:
         dist = -normal.dot(v0);
     }
 
-    bool intersect(const Ray &ray, Vec3 &P) const
+    bool intersect(const Ray& ray, Vec3& P) const
     {
         const float EPS = 1e-8f;
         float denom = Vec3::Dot(normal, ray.direction);
-        if (fabsf(denom) < EPS)
-            return false; // paralelo
+        if (fabsf(denom) < EPS) return false; // paralelo
 
         float t = -(Vec3::Dot(normal, ray.origin) + dist) / denom;
-        if (t < 0.0f)
-            return false; // atrás da origem
+        if (t < 0.0f) return false; // atrás da origem
 
         P = ray.pointAt(t);
         return true;
     }
 
-    float distanceToPoint(const Vec3 &p) const
-    {
-        return fabsf(Vec3::Dot(normal, p) + dist);
-    }
+    float distanceToPoint(const Vec3& p) const { return fabsf(Vec3::Dot(normal, p) + dist); }
 
-    bool containsPoint(const Vec3 &p) const
-    {
-        return fabsf(Vec3::Dot(normal, p) + dist) < Epsilon;
-    }
+    bool containsPoint(const Vec3& p) const { return fabsf(Vec3::Dot(normal, p) + dist) < Epsilon; }
 
-    Vec3 projectPoint(const Vec3 &p) const
+    Vec3 projectPoint(const Vec3& p) const
     {
         float d = Vec3::Dot(normal, p) + dist;
         return p - normal * d;
@@ -1912,16 +1953,16 @@ struct BoundingBox
     Vec3 max;
 
     BoundingBox() : min(0, 0, 0), max(0, 0, 0) {}
-    BoundingBox(const Vec3 &min, const Vec3 &max) : min(min), max(max) {}
-    BoundingBox(const BoundingBox &box) : min(box.min), max(box.max) {}
+    BoundingBox(const Vec3& min, const Vec3& max) : min(min), max(max) {}
+    BoundingBox(const BoundingBox& box) : min(box.min), max(box.max) {}
 
-    void Set(const Vec3 &min, const Vec3 &max)
+    void Set(const Vec3& min, const Vec3& max)
     {
         this->min = min;
         this->max = max;
     }
 
-    bool Merge(const Vec3 &_min, const Vec3 &_max)
+    bool Merge(const Vec3& _min, const Vec3& _max)
     {
         bool changed = false;
 
@@ -1969,7 +2010,7 @@ struct BoundingBox
 
         return changed;
     }
-    bool Merge(const BoundingBox &b)
+    bool Merge(const BoundingBox& b)
     {
         bool changed = false;
 
@@ -2018,7 +2059,7 @@ struct BoundingBox
         return changed;
     }
 
-    void AddPoint(const Vec3 &point)
+    void AddPoint(const Vec3& point)
     {
         min = min.Min(point);
         max = max.Max(point);
@@ -2033,28 +2074,28 @@ struct BoundingBox
     {
         switch (index)
         {
-        case 0:
-            return Vec3(min.x, min.y, max.z);
-        case 1:
-            return Vec3(max.x, min.y, max.z);
-        case 2:
-            return Vec3(max.x, max.y, max.z);
-        case 3:
-            return Vec3(min.x, max.y, max.z);
-        case 4:
-            return Vec3(min.x, min.y, min.z);
-        case 5:
-            return Vec3(max.x, min.y, min.z);
-        case 6:
-            return Vec3(max.x, max.y, min.z);
-        case 7:
-            return Vec3(min.x, max.y, min.z);
-        default:
-            return Vec3();
+            case 0:
+                return Vec3(min.x, min.y, max.z);
+            case 1:
+                return Vec3(max.x, min.y, max.z);
+            case 2:
+                return Vec3(max.x, max.y, max.z);
+            case 3:
+                return Vec3(min.x, max.y, max.z);
+            case 4:
+                return Vec3(min.x, min.y, min.z);
+            case 5:
+                return Vec3(max.x, min.y, min.z);
+            case 6:
+                return Vec3(max.x, max.y, min.z);
+            case 7:
+                return Vec3(min.x, max.y, min.z);
+            default:
+                return Vec3();
         }
     }
 
-    void Transform(const Mat4 &m)
+    void Transform(const Mat4& m)
     {
         // Efficient algorithm for transforming an AABB, taken from Graphics
         // Gems
@@ -2080,7 +2121,7 @@ struct BoundingBox
         max = Vec3(maxB[0], maxB[1], maxB[2]);
     }
 
-    bool Intersection(const Ray &ray)
+    bool Intersection(const Ray& ray)
     {
         // SLAB based optimized ray/AABB intersection routine
         // Idea taken from http://ompf.org/ray/
@@ -2104,19 +2145,18 @@ struct BoundingBox
         {
             // Consider length
             const Vec3 rayDest = ray.origin + ray.direction;
-            Vec3 rayMins(Min(rayDest.x, ray.origin.x),
-                         Min(rayDest.y, ray.origin.y),
+            Vec3 rayMins(Min(rayDest.x, ray.origin.x), Min(rayDest.y, ray.origin.y),
                          Min(rayDest.z, ray.origin.z));
-            Vec3 rayMaxs(Max(rayDest.x, ray.origin.x),
-                         Max(rayDest.y, ray.origin.y),
+            Vec3 rayMaxs(Max(rayDest.x, ray.origin.x), Max(rayDest.y, ray.origin.y),
                          Max(rayDest.z, ray.origin.z));
-            return (rayMins.x < max.x) && (rayMaxs.x > min.x) && (rayMins.y < max.y) && (rayMaxs.y > min.y) && (rayMins.z < max.z) && (rayMaxs.z > min.z);
+            return (rayMins.x < max.x) && (rayMaxs.x > min.x) && (rayMins.y < max.y) &&
+                   (rayMaxs.y > min.y) && (rayMins.z < max.z) && (rayMaxs.z > min.z);
         }
         else
             return false;
     }
 
-    float Distance(const Vec3 &pos)
+    float Distance(const Vec3& pos)
     {
         const Vec3 center = (min + max) * 0.5f;
         const Vec3 extent = (max - min) * 0.5f;
@@ -2129,24 +2169,21 @@ struct BoundingBox
         return nearestVec.length();
     }
 
-    BoundingBox &operator=(const BoundingBox &box)
+    BoundingBox& operator=(const BoundingBox& box)
     {
-        if (this == &box)
-            return *this;
+        if (this == &box) return *this;
         min = box.min;
         max = box.max;
         return *this;
     }
 
-    static BoundingBox TransformBoundingBox(const BoundingBox &box,
-                                            const Mat4 &m)
+    static BoundingBox TransformBoundingBox(const BoundingBox& box, const Mat4& m)
     {
         BoundingBox result(box);
         result.Transform(m);
         return result;
     }
-    static void TransformBoundingBox(const BoundingBox &box, const Mat4 &m,
-                                     BoundingBox &out)
+    static void TransformBoundingBox(const BoundingBox& box, const Mat4& m, BoundingBox& out)
     {
         out.Merge(box);
         out.Transform(m);
@@ -2154,33 +2191,40 @@ struct BoundingBox
 
     Vec3 corner(int n) const
     {
-        return Vec3((n & 1) ? max.x : min.x, (n & 2) ? max.y : min.y,
-                    (n & 4) ? max.z : min.z);
+        return Vec3((n & 1) ? max.x : min.x, (n & 2) ? max.y : min.y, (n & 4) ? max.z : min.z);
     }
 
     Vec3 center() const { return (min + max) * 0.5f; }
 
     // AABB vs AABB (sobreposição em todos os eixos).
-    bool intersects(const BoundingBox &b) const
+    bool intersects(const BoundingBox& b) const
     {
-        return min.x <= b.max.x && max.x >= b.min.x && min.y <= b.max.y &&
-               max.y >= b.min.y && min.z <= b.max.z && max.z >= b.min.z;
+        return min.x <= b.max.x && max.x >= b.min.x && min.y <= b.max.y && max.y >= b.min.y &&
+               min.z <= b.max.z && max.z >= b.min.z;
     }
 
     // Raio vs AABB (slab). Devolve t de entrada (>=0) ou -1 se não interseta.
-    float intersects_ray(const Vec3 &o, const Vec3 &d) const
+    float intersects_ray(const Vec3& o, const Vec3& d) const
     {
         float tmin = 0.0f, tmax = 1e30f;
         for (int i = 0; i < 3; ++i)
         {
             float oi = (&o.x)[i], di = (&d.x)[i];
             float mn = (&min.x)[i], mx = (&max.x)[i];
-            if (fabsf(di) < 1e-8f) { if (oi < mn || oi > mx) return -1.0f; }
+            if (fabsf(di) < 1e-8f)
+            {
+                if (oi < mn || oi > mx) return -1.0f;
+            }
             else
             {
                 float inv = 1.0f / di;
                 float t1 = (mn - oi) * inv, t2 = (mx - oi) * inv;
-                if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+                if (t1 > t2)
+                {
+                    float tmp = t1;
+                    t1 = t2;
+                    t2 = tmp;
+                }
                 tmin = t1 > tmin ? t1 : tmin;
                 tmax = t2 < tmax ? t2 : tmax;
                 if (tmin > tmax) return -1.0f;
@@ -2195,7 +2239,7 @@ struct Triangle
 {
     Vec3 v0, v1, v2;
     Triangle() : v0(0, 0, 0), v1(0, 0, 0), v2(0, 0, 0) {}
-    Triangle(const Vec3 &a, const Vec3 &b, const Vec3 &c) : v0(a), v1(b), v2(c) {}
+    Triangle(const Vec3& a, const Vec3& b, const Vec3& c) : v0(a), v1(b), v2(c) {}
 
     Vec3 center() const { return (v0 + v1 + v2) * (1.0f / 3.0f); }
     Vec3 normal() const
@@ -2215,11 +2259,11 @@ struct Triangle
 class Frustum
 {
 public:
-    const Vec3 &getOrigin() const { return m_origin; }
-    const Vec3 &getCorner(u32 index) const { return m_corners[index]; }
+    const Vec3& getOrigin() const { return m_origin; }
+    const Vec3& getCorner(u32 index) const { return m_corners[index]; }
 
-    void build(const Mat4 &transMat, float left, float right, float bottom,
-               float top, float nearPlane, float farPlane)
+    void build(const Mat4& transMat, float left, float right, float bottom, float top,
+               float nearPlane, float farPlane)
     {
         float left_f = left * farPlane / nearPlane;
         float right_f = right * farPlane / nearPlane;
@@ -2249,15 +2293,14 @@ public:
         m_planes[5] = Plane3D(m_corners[5], m_corners[4], m_corners[7]); // Far
     }
 
-    void build(const Mat4 &transMat, float fov, float aspect, float nearPlane,
-               float farPlane)
+    void build(const Mat4& transMat, float fov, float aspect, float nearPlane, float farPlane)
     {
         float ymax = nearPlane * tanf(degToRad(fov / 2));
         float xmax = ymax * aspect;
 
         build(transMat, -xmax, xmax, -ymax, ymax, nearPlane, farPlane);
     }
-    void build(const Mat4 &viewMat, const Mat4 &projMat)
+    void build(const Mat4& viewMat, const Mat4& projMat)
     {
         // This routine works with the OpenGL projection matrix
         // The view matrix is the inverse camera transformation matrix
@@ -2265,80 +2308,61 @@ public:
 
         Mat4 m = projMat * viewMat;
 
-        m_planes[0] =
-            Plane3D(-(m.c[0][3] + m.c[0][0]), -(m.c[1][3] + m.c[1][0]),
-                    -(m.c[2][3] + m.c[2][0]), -(m.c[3][3] + m.c[3][0])); // Left
-        m_planes[1] = Plane3D(
-            -(m.c[0][3] - m.c[0][0]), -(m.c[1][3] - m.c[1][0]),
-            -(m.c[2][3] - m.c[2][0]), -(m.c[3][3] - m.c[3][0])); // Right
-        m_planes[2] = Plane3D(
-            -(m.c[0][3] + m.c[0][1]), -(m.c[1][3] + m.c[1][1]),
-            -(m.c[2][3] + m.c[2][1]), -(m.c[3][3] + m.c[3][1])); // Bottom
-        m_planes[3] =
-            Plane3D(-(m.c[0][3] - m.c[0][1]), -(m.c[1][3] - m.c[1][1]),
-                    -(m.c[2][3] - m.c[2][1]), -(m.c[3][3] - m.c[3][1])); // Top
-        m_planes[4] =
-            Plane3D(-(m.c[0][3] + m.c[0][2]), -(m.c[1][3] + m.c[1][2]),
-                    -(m.c[2][3] + m.c[2][2]), -(m.c[3][3] + m.c[3][2])); // Near
-        m_planes[5] =
-            Plane3D(-(m.c[0][3] - m.c[0][2]), -(m.c[1][3] - m.c[1][2]),
-                    -(m.c[2][3] - m.c[2][2]), -(m.c[3][3] - m.c[3][2])); // Far
+        m_planes[0] = Plane3D(-(m.c[0][3] + m.c[0][0]), -(m.c[1][3] + m.c[1][0]),
+                              -(m.c[2][3] + m.c[2][0]), -(m.c[3][3] + m.c[3][0])); // Left
+        m_planes[1] = Plane3D(-(m.c[0][3] - m.c[0][0]), -(m.c[1][3] - m.c[1][0]),
+                              -(m.c[2][3] - m.c[2][0]), -(m.c[3][3] - m.c[3][0])); // Right
+        m_planes[2] = Plane3D(-(m.c[0][3] + m.c[0][1]), -(m.c[1][3] + m.c[1][1]),
+                              -(m.c[2][3] + m.c[2][1]), -(m.c[3][3] + m.c[3][1])); // Bottom
+        m_planes[3] = Plane3D(-(m.c[0][3] - m.c[0][1]), -(m.c[1][3] - m.c[1][1]),
+                              -(m.c[2][3] - m.c[2][1]), -(m.c[3][3] - m.c[3][1])); // Top
+        m_planes[4] = Plane3D(-(m.c[0][3] + m.c[0][2]), -(m.c[1][3] + m.c[1][2]),
+                              -(m.c[2][3] + m.c[2][2]), -(m.c[3][3] + m.c[3][2])); // Near
+        m_planes[5] = Plane3D(-(m.c[0][3] - m.c[0][2]), -(m.c[1][3] - m.c[1][2]),
+                              -(m.c[2][3] - m.c[2][2]), -(m.c[3][3] - m.c[3][2])); // Far
 
         m_origin = viewMat.inverted() * Vec3(0, 0, 0);
 
         // Calculate corners
         Mat4 mm = m.inverted();
         Vec4 corner = mm * Vec4(-1, -1, -1, 1);
-        m_corners[0] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[0] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
         corner = mm * Vec4(1, -1, -1, 1);
-        m_corners[1] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[1] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
         corner = mm * Vec4(1, 1, -1, 1);
-        m_corners[2] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[2] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
         corner = mm * Vec4(-1, 1, -1, 1);
-        m_corners[3] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[3] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
         corner = mm * Vec4(-1, -1, 1, 1);
-        m_corners[4] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[4] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
         corner = mm * Vec4(1, -1, 1, 1);
-        m_corners[5] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[5] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
         corner = mm * Vec4(1, 1, 1, 1);
-        m_corners[6] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[6] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
         corner = mm * Vec4(-1, 1, 1, 1);
-        m_corners[7] =
-            Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
+        m_corners[7] = Vec3(corner.x / corner.w, corner.y / corner.w, corner.z / corner.w);
     }
     bool SphereInside(Vec3 pos, float rad) const
     {
         for (u32 i = 0; i < 6; ++i)
         {
-            if (m_planes[i].distanceToPoint(pos) > rad)
-                return true;
+            if (m_planes[i].distanceToPoint(pos) > rad) return true;
         }
 
         return false;
     }
-    bool BoxInside(BoundingBox &b) const
+    bool BoxInside(BoundingBox& b) const
     {
         for (u32 i = 0; i < 6; ++i)
         {
-            const Vec3 &n = m_planes[i].normal;
+            const Vec3& n = m_planes[i].normal;
 
             Vec3 positive = b.min;
-            if (n.x <= 0)
-                positive.x = b.max.x;
-            if (n.y <= 0)
-                positive.y = b.max.y;
-            if (n.z <= 0)
-                positive.z = b.max.z;
+            if (n.x <= 0) positive.x = b.max.x;
+            if (n.y <= 0) positive.y = b.max.y;
+            if (n.z <= 0) positive.z = b.max.z;
 
-            if (m_planes[i].distanceToPoint(positive) > 0)
-                return true;
+            if (m_planes[i].distanceToPoint(positive) > 0) return true;
         }
 
         return false;
@@ -2347,29 +2371,28 @@ public:
     // Teste AABB-vs-frustum correto (signed distance + p-vertex). Devolve true
     // se a caixa está dentro ou interseta o frustum; false se totalmente fora.
     // (distanceToPoint do Plane3D é |.|, por isso usamos a distância com sinal.)
-    bool ContainsBox(const BoundingBox &box) const
+    bool ContainsBox(const BoundingBox& box) const
     {
         // Os planos deste Frustum apontam para FORA (interior tem s<0), por isso
         // a caixa está toda fora se o n-vertex (o vértice mais contra a normal)
         // ainda está do lado de fora (s>0).
         for (u32 i = 0; i < 6; ++i)
         {
-            const Vec3 &n = m_planes[i].normal;
+            const Vec3& n = m_planes[i].normal;
             Vec3 p;
             p.x = (n.x >= 0.0f) ? box.min.x : box.max.x;
             p.y = (n.y >= 0.0f) ? box.min.y : box.max.y;
             p.z = (n.z >= 0.0f) ? box.min.z : box.max.z;
-            if (Vec3::Dot(n, p) + m_planes[i].dist > 0.0f)
-                return false;
+            if (Vec3::Dot(n, p) + m_planes[i].dist > 0.0f) return false;
         }
         return true;
     }
 
-    bool PointInside(const Vec3 &point) const
+    bool PointInside(const Vec3& point) const
     {
         for (u32 i = 0; i < 6; ++i)
         {
-            const Plane3D &plane = m_planes[i];
+            const Plane3D& plane = m_planes[i];
             if (plane.distanceToPoint(point) < 0)
             {
                 return false;
@@ -2378,7 +2401,7 @@ public:
         return true;
     }
 
-    void getAABB(Vec3 &mins, Vec3 &maxs) const
+    void getAABB(Vec3& mins, Vec3& maxs) const
     {
         mins.x = MaxFloat;
         mins.y = MaxFloat;
@@ -2389,21 +2412,15 @@ public:
 
         for (u32 i = 0; i < 8; ++i)
         {
-            if (m_corners[i].x < mins.x)
-                mins.x = m_corners[i].x;
-            if (m_corners[i].y < mins.y)
-                mins.y = m_corners[i].y;
-            if (m_corners[i].z < mins.z)
-                mins.z = m_corners[i].z;
-            if (m_corners[i].x > maxs.x)
-                maxs.x = m_corners[i].x;
-            if (m_corners[i].y > maxs.y)
-                maxs.y = m_corners[i].y;
-            if (m_corners[i].z > maxs.z)
-                maxs.z = m_corners[i].z;
+            if (m_corners[i].x < mins.x) mins.x = m_corners[i].x;
+            if (m_corners[i].y < mins.y) mins.y = m_corners[i].y;
+            if (m_corners[i].z < mins.z) mins.z = m_corners[i].z;
+            if (m_corners[i].x > maxs.x) maxs.x = m_corners[i].x;
+            if (m_corners[i].y > maxs.y) maxs.y = m_corners[i].y;
+            if (m_corners[i].z > maxs.z) maxs.z = m_corners[i].z;
         }
     }
-    void getAABB(BoundingBox &b) const
+    void getAABB(BoundingBox& b) const
     {
         Vec3 mins, maxs;
         getAABB(mins, maxs);
@@ -2417,8 +2434,7 @@ private:
     Vec3 m_corners[8];
 };
 
-template <typename T>
-struct Rectangle
+template <typename T> struct Rectangle
 {
 
     T x;
@@ -2427,12 +2443,8 @@ struct Rectangle
     T height;
 
     Rectangle() : x(0), y(0), width(0), height(0) {}
-    Rectangle(T x, T y, T width, T height)
-        : x(x), y(y), width(width), height(height)
-    {
-    }
-    Rectangle(const Rectangle &rect)
-        : x(rect.x), y(rect.y), width(rect.width), height(rect.height)
+    Rectangle(T x, T y, T width, T height) : x(x), y(y), width(width), height(height) {}
+    Rectangle(const Rectangle& rect) : x(rect.x), y(rect.y), width(rect.width), height(rect.height)
     {
     }
 
@@ -2444,7 +2456,7 @@ struct Rectangle
         this->height = height;
     }
 
-    void Merge(const Rectangle &rect)
+    void Merge(const Rectangle& rect)
     {
         T right = x + width;
         T bottom = y + height;
@@ -2458,7 +2470,7 @@ struct Rectangle
         height = bottom - y;
     }
 
-    void Merge(const Vec2 &point)
+    void Merge(const Vec2& point)
     {
         T right = x + width;
         T bottom = y + height;
@@ -2478,10 +2490,9 @@ struct Rectangle
         height = 0;
     }
 
-    Rectangle &operator=(const Rectangle &rect)
+    Rectangle& operator=(const Rectangle& rect)
     {
-        if (this == &rect)
-            return *this;
+        if (this == &rect) return *this;
         x = rect.x;
         y = rect.y;
         width = rect.width;
@@ -2490,20 +2501,18 @@ struct Rectangle
     }
 };
 
-template <typename T>
-struct Size
+template <typename T> struct Size
 {
     T width;
     T height;
 
     Size() : width(0), height(0) {}
     Size(T w, T h) : width(w), height(h) {}
-    Size(const Size &size) : width(size.width), height(size.height) {}
+    Size(const Size& size) : width(size.width), height(size.height) {}
 
-    Size &operator=(const Size &size)
+    Size& operator=(const Size& size)
     {
-        if (this == &size)
-            return *this;
+        if (this == &size) return *this;
         width = size.width;
         height = size.height;
         return *this;

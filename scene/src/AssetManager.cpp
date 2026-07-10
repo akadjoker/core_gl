@@ -1,5 +1,6 @@
 #include "scene/AssetManager.hpp"
 #include "scene/Filesystem.hpp"
+#include <coregl/gl_log.hpp>
 
 #include <cstring>
 
@@ -16,6 +17,7 @@ struct AssetManager::Impl
 {
     std::unordered_map<std::string, gl::Texture*> textures;
     std::unordered_map<std::string, gl::Shader*> shaders;
+    gl::Texture* fallback = nullptr; // checkerboard, owned via `textures`
 };
 
 AssetManager::AssetManager() : m_impl(new Impl) {}
@@ -53,6 +55,7 @@ void AssetManager::clear()
         }
     }
     m_impl->textures.clear();
+    m_impl->fallback = nullptr;
 
     for (auto& pair : m_impl->shaders)
     {
@@ -73,20 +76,54 @@ gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool 
     if (it != m_impl->textures.end()) return it->second;
 
     scene::ByteArray data;
-    if (!fs::getFilesystem().readFile(path, data)) return nullptr;
+    if (!fs::getFilesystem().readFile(path, data))
+    {
+        gl::Log::Warn("AssetManager: texture '%s' not found ('%s') — using checkerboard", name,
+                      path);
+        return defaultTexture();
+    }
 
     int w = 0, h = 0, channels = 0;
     stbi_uc* pixels = stbi_load_from_memory(data.data(), (int)data.size(), &w, &h, &channels, 4);
 
     data.destroy();
 
-    if (!pixels) return nullptr;
+    if (!pixels)
+    {
+        gl::Log::Warn("AssetManager: texture '%s' failed to decode ('%s') — using checkerboard",
+                      name, path);
+        return defaultTexture();
+    }
 
     gl::Texture* tex = new gl::Texture();
     tex->Load2D(pixels, w, h, sRGB ? gl::TextureFormat::SRGB8_ALPHA8 : gl::TextureFormat::RGBA8);
     stbi_image_free(pixels);
 
     m_impl->textures[name] = tex;
+    return tex;
+}
+
+gl::Texture* AssetManager::defaultTexture()
+{
+    if (m_impl->fallback) return m_impl->fallback;
+    // 64x64 magenta/black checker: unmistakably "asset missing"
+    const int N = 64;
+    static gl::u8 px[N * N * 4];
+    for (int y = 0; y < N; ++y)
+        for (int x = 0; x < N; ++x)
+        {
+            bool on = ((x / 8) + (y / 8)) & 1;
+            gl::u8* p = &px[(y * N + x) * 4];
+            p[0] = on ? 255 : 0;
+            p[1] = 0;
+            p[2] = on ? 255 : 0;
+            p[3] = 255;
+        }
+    gl::Texture* tex = new gl::Texture();
+    tex->Load2D(px, N, N, gl::TextureFormat::RGBA8);
+    tex->SetWrap(gl::TextureWrap::REPEAT, gl::TextureWrap::REPEAT);
+    m_impl->textures["__checker"] = tex;
+    m_impl->fallback = tex;
     return tex;
 }
 

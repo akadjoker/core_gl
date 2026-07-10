@@ -194,6 +194,33 @@ bool BindFBO(u32 id)
     return true;
 }
 
+void OnBufferDeleted(u32 id)
+{
+    for (int i = 0; i < 5; ++i)
+        if (s.boundBuffer[i] == id) s.boundBuffer[i] = 0;
+}
+
+void OnVAODeleted(u32 id)
+{
+    if (s.boundVAO == id)
+    {
+        s.boundVAO = 0;
+        s.indexType = GL_UNSIGNED_INT;
+        s.indexSize = 4;
+    }
+}
+
+void OnTextureDeleted(u32 id)
+{
+    for (int i = 0; i < 32; ++i)
+        if (s.boundTexture[i] == id) s.boundTexture[i] = 0;
+}
+
+void OnFBODeleted(u32 id)
+{
+    if (s.boundFBO == id) s.boundFBO = 0;
+}
+
 void SetIndexType(GLenum glType, u32 byteSize)
 {
     s.indexType = glType;

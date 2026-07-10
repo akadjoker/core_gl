@@ -5,7 +5,6 @@
 #include <coregl/gl_vertex_array.hpp>
 #include <vector>
 
- 
 struct MeshVertex
 {
     Vec3 position;
@@ -25,7 +24,6 @@ struct Surface
     BoundingBox bounds;
 };
 
- 
 class Mesh
 {
 public:
@@ -45,10 +43,20 @@ public:
     void compute_bounds();
 
     // ── GPU ──
-    void upload();      // builds the GL buffers/VAO from the CPU data
-    void free_cpu();    // drops the CPU copy (GPU side stays)
-    void release_gpu(); // frees the GL objects (call while the context lives)
+    void upload();         // builds the GL buffers/VAO from the CPU data
+    void upload_dynamic(); // same but with DYNAMIC_DRAW usage (for deformable terrain)
+    void free_cpu();       // drops the CPU copy (GPU side stays)
+    void release_gpu();    // frees the GL objects (call while the context lives)
     bool is_uploaded() const { return m_uploaded; }
+
+    // ── Dynamic updates (mesh must be uploaded_dynamic) ──
+    // Re-uploads the index buffer from the caller's data (icount indices,
+    // must fit the allocation). Used by LOD terrain rebuilding its IBO.
+    void update_indices(const u32* indices, u32 icount);
+    // Re-uploads the vertex buffer from the CPU-side m_vertices.
+    void update_vertices();
+    // Sets the first surface's index_count for dynamic IBO meshes (LOD terrain).
+    void set_dynamic_index_count(u32 icount);
 
     // ── read access for the renderer ──
     gl::VertexArray& vao() { return m_vao; }
@@ -68,4 +76,5 @@ private:
     gl::Buffer m_ibo;
     gl::VertexArray m_vao;
     bool m_uploaded = false;
+    bool m_dynamic = false;
 };

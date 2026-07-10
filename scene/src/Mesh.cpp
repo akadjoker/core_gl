@@ -145,6 +145,51 @@ void Mesh::upload()
     m_uploaded = true;
 }
 
+void Mesh::upload_dynamic()
+{
+    if (m_vertices.empty() || m_indices.empty()) return;
+
+    m_dynamic = true;
+    m_vbo.Allocate(gl::BufferType::ARRAY, m_vertices.data(), m_vertices.size() * sizeof(MeshVertex),
+                   gl::UsageType::DYNAMIC_DRAW);
+    m_ibo.Allocate(gl::BufferType::ELEMENT_ARRAY, m_indices.data(), m_indices.size() * sizeof(u32),
+                   gl::UsageType::DYNAMIC_DRAW);
+
+    const gl::VertexAttrib layout[] = {
+        {gl::VertexAttribType::FLOAT, 3, 0, false}, // position
+        {gl::VertexAttribType::FLOAT, 3, 0, false}, // normal
+        {gl::VertexAttribType::FLOAT, 4, 0, false}, // tangent (w = handedness)
+        {gl::VertexAttribType::FLOAT, 2, 0, false}, // uv
+    };
+    m_vao.AddVertexBuffer(m_vbo, layout, 4, sizeof(MeshVertex));
+    m_vao.SetIndexBuffer(m_ibo, gl::VertexAttribType::UINT);
+
+    if (m_surfaces.empty())
+    {
+        add_surface(0, (u32)m_indices.size(), 0);
+        m_surfaces.back().bounds = m_bounds;
+    }
+    m_uploaded = true;
+}
+
+void Mesh::update_indices(const u32* indices, u32 icount)
+{
+    if (!m_uploaded || !m_dynamic || !indices || icount == 0) return;
+    if ((size_t)icount * sizeof(u32) > m_indices.size() * sizeof(u32)) return; // fits allocation
+    m_ibo.Upload(indices, (size_t)icount * sizeof(u32));
+}
+
+void Mesh::update_vertices()
+{
+    if (!m_uploaded || !m_dynamic || m_vertices.empty()) return;
+    m_vbo.Upload(m_vertices.data(), m_vertices.size() * sizeof(MeshVertex));
+}
+
+void Mesh::set_dynamic_index_count(u32 icount)
+{
+    if (!m_surfaces.empty()) m_surfaces[0].index_count = icount;
+}
+
 void Mesh::release_gpu()
 {
     m_vao.Release();

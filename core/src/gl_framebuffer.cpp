@@ -27,7 +27,11 @@ static void ensureFBO(u32& id)
 
 void FrameBuffer::Release()
 {
-    if (id && state::ContextAlive()) glDeleteFramebuffers(1, &id);
+    if (id && state::ContextAlive())
+    {
+        glDeleteFramebuffers(1, &id);
+        state::OnFBODeleted(id);
+    }
     id = 0;
     for (int i = 0; i < 19; ++i)
         attachments[i] = AttachmentInfo();

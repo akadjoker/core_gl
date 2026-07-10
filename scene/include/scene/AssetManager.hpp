@@ -15,7 +15,11 @@ public:
     bool init();
     void release();
 
+    // Never returns null: a missing/corrupt file logs a warning and yields
+    // the shared checkerboard fallback — the scene keeps rendering.
     gl::Texture* loadTexture(const char* name, const char* path, bool sRGB = false);
+    // shared magenta/black checker (lazily built)
+    gl::Texture* defaultTexture();
     // registers an empty texture owned by the manager — for procedurally
     // generated content (the caller fills it with Load2D/LoadArray/...)
     gl::Texture* createTexture(const char* name);

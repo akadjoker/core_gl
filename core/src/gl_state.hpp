@@ -28,6 +28,15 @@ bool BindBuffer(BufferType type, u32 id);
 bool BindTexture(u32 unit, GLenum target, u32 id);
 bool BindFBO(u32 id);
 
+// Deletion hooks: glDelete* unbinds the object from the CONTEXT, but the
+// cache would still claim it is bound — and GL recycles ids, so the next
+// bind of a recycled id would be skipped against an empty target. Every
+// Release() must invalidate its cached bindings.
+void OnBufferDeleted(u32 id);
+void OnVAODeleted(u32 id);
+void OnTextureDeleted(u32 id);
+void OnFBODeleted(u32 id);
+
 // Index buffer type of the currently bound VAO (set by VertexArray)
 void SetIndexType(GLenum glType, u32 byteSize);
 GLenum IndexTypeGL();

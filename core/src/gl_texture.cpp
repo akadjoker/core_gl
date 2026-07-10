@@ -54,7 +54,11 @@ Texture::Texture() = default;
 
 void Texture::Release()
 {
-    if (id && state::ContextAlive()) glDeleteTextures(1, &id);
+    if (id && state::ContextAlive())
+    {
+        glDeleteTextures(1, &id);
+        state::OnTextureDeleted(id);
+    }
     id = 0;
     target = 0;
     width = height = layers = 0;
@@ -104,6 +108,7 @@ static u32 createAndBind(u32& id, u32& target, GLenum newTarget)
     if (id && target != newTarget)
     {
         glDeleteTextures(1, &id);
+        state::OnTextureDeleted(id);
         id = 0;
     }
     if (!id) glGenTextures(1, &id);

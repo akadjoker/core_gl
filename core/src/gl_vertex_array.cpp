@@ -27,7 +27,11 @@ static void ensureVAO(u32& id)
 
 void VertexArray::Release()
 {
-    if (id && state::ContextAlive()) glDeleteVertexArrays(1, &id);
+    if (id && state::ContextAlive())
+    {
+        glDeleteVertexArrays(1, &id);
+        state::OnVAODeleted(id);
+    }
     id = 0;
     attribIndex = 0;
 }

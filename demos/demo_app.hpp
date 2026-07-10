@@ -5,6 +5,7 @@
 // F10 records a GIF of the window; COREGL_RECORD=1 starts recording at once.
 
 #include <coregl/gl_core.hpp>
+#include <scene/Filesystem.hpp>
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <cstdlib>
@@ -61,6 +62,11 @@ struct DemoApp
 
         // demos always report GL errors through gl::Log, even in release
         gl::Renderer::EnableDebugOutput();
+
+        // asset lookup works from the repo root, the build dir or build/demos
+        fs::getFilesystem().addFolder(".");
+        fs::getFilesystem().addFolder("..");
+        fs::getFilesystem().addFolder("../..");
 
         if (getenv("COREGL_RECORD"))
         {
