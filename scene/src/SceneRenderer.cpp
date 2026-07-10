@@ -322,11 +322,6 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
         m_cascadeMat[c] = csmCascadeMatrix(c, camera->get_aspect(), camera->get_fov(), view,
                                            m_splits, m_lightDir, (float)m_shadowSize);
 
-    // every caster, no frustum: casters outside the view still throw
-    // shadows into it
-    m_shadow_items.clear();
-    scene.collect(m_shadow_items);
-
     m_shadowFbo.Bind();
     gl::Renderer::Viewport(0, 0, m_shadowSize, m_shadowSize);
     gl::Renderer::SetDepthTest(true);
@@ -337,6 +332,17 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
     m_depth.Bind();
     for (int c = 0; c < m_cascades; ++c)
     {
+        // cull against THIS cascade's own light-space frustum — it was
+        // already extended (csmCascadeMatrix's depthScale) to catch casters
+        // outside the camera view, so this doesn't drop legitimate casters;
+        // it drops the rest of the scene, which used to be drawn into every
+        // cascade layer regardless of distance (a terrain-sized scene paid
+        // for the whole heightmap 4x over, unculled, every frame)
+        Frustum cascadeFrustum;
+        cascadeFrustum.build(Mat4::Identity(), m_cascadeMat[c]);
+        m_shadow_items.clear();
+        scene.collect(m_shadow_items, &cascadeFrustum);
+
         m_shadowFbo.AttachTextureLayer(m_shadowTex, gl::Attachment::DEPTH, c);
         gl::Renderer::Clear(false, true);
         for (const RenderItem& item : m_shadow_items)
