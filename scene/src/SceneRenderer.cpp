@@ -6,6 +6,7 @@
 #include "scene/GrassSystemNode.hpp"
 #include "scene/OceanNode.hpp"
 #include "scene/ParticleSystemNode.hpp"
+#include "scene/RibbonTrailNode.hpp"
 #include "scene/WaterNode.hpp"
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_renderer.hpp>
@@ -565,6 +566,14 @@ void SceneRenderer::collect_grass(Node* node, std::vector<GrassSystemNode*>& out
         collect_grass(child, out);
 }
 
+void SceneRenderer::collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out)
+{
+    RibbonTrailNode* r = node->as<RibbonTrailNode>();
+    if (r) out.push_back(r);
+    for (Node* child : node->get_children())
+        collect_ribbontrails(child, out);
+}
+
 // Alpha-cutout, not alpha-blend: depth test+write ON, no cull (blades are
 // single-sided planes meant to be seen from both faces), no blending or
 // sorting needed since a fragment is either fully there or fully gone.
@@ -648,6 +657,39 @@ void SceneRenderer::draw_particles(const Mat4& viewProj)
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, (u32)ds->active_count() * 6u);
     }
     if (!m_decalSystems.empty()) gl::Renderer::SetPolygonOffset(false);
+
+    gl::Renderer::SetBlend(false);
+    gl::Renderer::SetDepthWrite(true);
+}
+
+// Ribbon trails reuse the particle shader (same vertex layout:
+// world-space position, color in tangent, uv). Each trail bakes a
+// dynamic triangle strip during rebuild() and is drawn with its own
+// texture/blend mode, depth-write off for proper alpha layering.
+void SceneRenderer::draw_ribbontrails(const Mat4& viewProj)
+{
+    if (m_ribbonTrails.empty()) return;
+
+    gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(true);
+
+    m_particle.Bind();
+    m_particle.SetMat4(m_locPViewProj, viewProj.x);
+
+    for (RibbonTrailNode* rt : m_ribbonTrails)
+    {
+        if (rt->index_count() == 0) continue;
+        if (rt->blend == ParticleBlendMode::Additive)
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE);
+        else
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                          gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+        gl::Texture* tex = rt->texture ? rt->texture : &m_white;
+        tex->Bind(0);
+        rt->quad_mesh().vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, rt->index_count());
+    }
 
     gl::Renderer::SetBlend(false);
     gl::Renderer::SetDepthWrite(true);
@@ -923,13 +965,18 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     collect_particles(&scene.root(), m_particleSystems);
     m_decalSystems.clear();
     collect_decals(&scene.root(), m_decalSystems);
-    if (!m_particleSystems.empty() || !m_decalSystems.empty())
+    m_ribbonTrails.clear();
+    collect_ribbontrails(&scene.root(), m_ribbonTrails);
+    if (!m_particleSystems.empty() || !m_decalSystems.empty() || !m_ribbonTrails.empty())
     {
         Vec3 camRight = Mat4(camera->get_global_rotation()) * Vec3(1.f, 0.f, 0.f);
         Vec3 camUp = Mat4(camera->get_global_rotation()) * Vec3(0.f, 1.f, 0.f);
         for (ParticleSystemNode* ps : m_particleSystems)
             ps->build_billboards(camRight, camUp);
+        for (RibbonTrailNode* rt : m_ribbonTrails)
+            rt->rebuild(cameraPos, camUp);
         draw_particles(proj * view);
+        draw_ribbontrails(proj * view);
     }
 
     if (post)

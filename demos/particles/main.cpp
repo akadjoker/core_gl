@@ -14,6 +14,7 @@
 #include <scene/ParticleSystemNode.hpp>
 #include <scene/DecalSystemNode.hpp>
 #include <scene/GrassSystemNode.hpp>
+#include <scene/RibbonTrailNode.hpp>
 #include <scene/AssetManager.hpp>
 #include <scene/Pixmap.hpp>
 
@@ -59,8 +60,13 @@ int main(int argc, char** argv)
     Scene scene;
     assets::AssetManager& assets = assets::AssetManager::instance();
 
-    gl::Texture* dot = assets.createTexture("particle_dot");
-    buildDotTexture(*dot, 64);
+      
+
+    gl::Texture* particle = assets.loadTexture("particles", "assets/textures/light.jpg");
+
+    gl::Texture* dot = assets.loadTexture("GRASS", "assets/textures/grass1.png");
+    //assets.createTexture("particle_dot");
+    //buildDotTexture(*dot, 64);
 
     // simple flat ground so the emitters have something to sit on
     Mesh* groundMesh = scene.create_mesh();
@@ -95,7 +101,7 @@ int main(int argc, char** argv)
 
     // ── fire + smoke: cone emitter, additive glow, gravity+drag+turbulence ──
     ParticleSystemNode* fire = scene.root().create_child<ParticleSystemNode>("fire", 400);
-    fire->texture = dot;
+    fire->texture = particle;
     fire->blend = ParticleBlendMode::Additive;
     fire->set_position(-15.f, 0.f, 0.f);
     fire->setContinuous(120.f)
@@ -111,7 +117,7 @@ int main(int argc, char** argv)
 
     // ── fountain of sparks: point emitter, gravity pulls them back down ──
     ParticleSystemNode* fountain = scene.root().create_child<ParticleSystemNode>("fountain", 600);
-    fountain->texture = dot;
+    fountain->texture = particle;
     fountain->blend = ParticleBlendMode::Additive;
     fountain->set_position(15.f, 0.f, 0.f);
     fountain->setContinuous(200.f)
@@ -126,7 +132,7 @@ int main(int argc, char** argv)
 
     // ── smoke puff: alpha-blended burst, box emitter, slow rise ──
     ParticleSystemNode* smoke = scene.root().create_child<ParticleSystemNode>("smoke", 200);
-    smoke->texture = dot;
+    smoke->texture = particle;
     smoke->blend = ParticleBlendMode::Alpha;
     smoke->set_position(0.f, 0.f, -15.f);
     smoke->setBurst(30, 1.2f)
@@ -137,7 +143,17 @@ int main(int argc, char** argv)
         ->setLifetime(2.5f, 3.5f)
         ->setSize(Vec2(0.8f, 0.8f), Vec2(3.5f, 3.5f))
         ->setColor(Vec4(0.6f, 0.6f, 0.6f, 0.35f), Vec4(0.6f, 0.6f, 0.6f, 0.0f));
+    // ── ribbon trail: follows a node that spins in a figure-8 ──
+    Node3D* orbiter = scene.root().create_child<Node3D>("orbiter");
+    orbiter->set_position(0.f, 2.5f, -5.f);
 
+    RibbonTrailNode* trail = scene.root().create_child<RibbonTrailNode>("trail", 1, 80);
+    trail->texture = particle;
+    trail->blend = ParticleBlendMode::Additive;
+    trail->setTrailLength(2.5f);
+    trail->setMinSegment(0.08f);
+    trail->addChain(orbiter, Vec4(1.0f, 0.45f, 0.1f, 0.9f),
+                    Vec4(0.8f, 0.2f, 0.05f, 0.0f), 0.40f, 0.04f);
     // ── scorch decals on the ground, normal-oriented (not billboarded) ──
     DecalSystemNode* decals = scene.root().create_child<DecalSystemNode>("decals", 64);
     decals->texture = dot;
@@ -192,6 +208,16 @@ int main(int argc, char** argv)
 
         fly.apply(camera, dt);
         scene.update(dt);
+
+        // animate the ribbon-trail orbiter: figure-8 over time
+        {
+            float t = (float)frame * 0.03f;
+            float x = sinf(t) * 10.f;
+            float z = cosf(t * 0.5f) * 6.f - 5.f;
+            float y = 2.5f + sinf(t * 2.f) * 1.2f;
+            orbiter->set_position(x, y, z);
+        }
+
         int w, h;
         app.DrawableSize(&w, &h);
         renderer.render(scene, w, h);

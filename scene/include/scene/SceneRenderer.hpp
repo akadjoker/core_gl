@@ -17,6 +17,7 @@ class LightNode;
 class ParticleSystemNode;
 class DecalSystemNode;
 class GrassSystemNode;
+class RibbonTrailNode;
 
 // Draws a Scene. This is the engine-side boundary: game code builds the node
 // tree and calls render() — it never touches coregl directly.
@@ -107,6 +108,8 @@ private:
     static void collect_decals(Node* node, std::vector<DecalSystemNode*>& out);
     void draw_grass(const Mat4& viewProj);
     static void collect_grass(Node* node, std::vector<GrassSystemNode*>& out);
+    void draw_ribbontrails(const Mat4& viewProj);
+    static void collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out);
 
     // forward pass
     gl::Shader m_forward;
@@ -186,6 +189,7 @@ private:
     gl::Shader m_grass;
     gl::i32 m_locGViewProj = -1;
     std::vector<GrassSystemNode*> m_grassSystems; // reused across frames
+    std::vector<RibbonTrailNode*> m_ribbonTrails; // reused across frames
 
     // procedural sky pass
     gl::Shader m_sky;
