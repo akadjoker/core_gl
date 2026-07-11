@@ -10,6 +10,12 @@ add_library(scene STATIC
     src/InfiniteTerrainNode.cpp
     src/TerrainLodNode.cpp
     src/TerrainPagingNode.cpp
+    src/Skeleton.cpp
+    src/AnimationClip.cpp
+    src/AnimationPlayer.cpp
+    src/SkinnedMesh.cpp
+    src/SkinnedMeshInstance.cpp
+    src/BoneAttachment.cpp
     src/Camera3D.cpp
     src/Scene.cpp
     src/SceneRenderer.cpp
