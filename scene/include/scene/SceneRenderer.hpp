@@ -2,7 +2,7 @@
 
 #include "scene/Math.hpp"
 #include "scene/Scene.hpp"
-#include "scene/LensFlare.hpp"
+#include <coregl/gl_batch.hpp>
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
@@ -76,7 +76,18 @@ public:
 
     int last_item_count() const { return m_last_items; }
 
+    // snapshot of the core RenderStats taken at the end of render() — the
+    // whole frame's draw calls/tris/binds/state changes, readable by game
+    // code without touching gl:: directly
+    const gl::RenderStats& frame_stats() const { return m_frameStats; }
+
+    // on-screen stats panel (Batch + embedded font), drawn at the very end
+    // of render(). Toggle from the game (F9 in the demos).
+    void set_show_stats(bool on) { m_show_stats = on; }
+    bool show_stats() const { return m_show_stats; }
+
 private:
+    void draw_stats(int viewport_w, int viewport_h);
     // one rendering of the scene into one target
     struct RenderView
     {
@@ -111,7 +122,8 @@ private:
     static void collect_grass(Node* node, std::vector<GrassSystemNode*>& out);
     void draw_ribbontrails(const Mat4& viewProj);
     static void collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out);
-    void draw_lensflare(Camera3D& cam);
+    void draw_lensflares(Camera3D& cam);
+    static void collect_lensflares(Node* node, std::vector<class LensFlareNode*>& out);
 
     // forward pass
     gl::Shader m_forward;
@@ -215,9 +227,7 @@ private:
 
     gl::Texture m_white;    // 1x1 fallback so u_diffuse always samples something
     gl::Texture m_gray;     // 1x1 neutral detail map
-    gl::Texture m_flareTex; // lens flare atlas (flares.png)
-
-    LensFlare m_lensflare; // screen-space sun flare pass
+    std::vector<class LensFlareNode*> m_lensflares; // reused across frames
 
     // terrain shader (texture splatting, Ogre-style)
     gl::Shader m_terrainShader;
@@ -233,6 +243,12 @@ private:
     std::vector<RenderItem> m_items;  // reused across views
     std::vector<WaterNode*> m_waters; // reused across frames
     int m_last_items = 0;
+    gl::RenderStats m_frameStats;
+    gl::Batch m_statsBatch; // lazy-init 2D batch for the stats panel
+    bool m_statsBatchReady = false;
+    bool m_show_stats = false;
+    gl::u64 m_lastFrameNs = 0; // render()-to-render() clock for the fps line
+    float m_smoothMs = 0.f;    // exponentially smoothed frame time
     bool m_ready = false;
     bool m_debug_views = false;
 };

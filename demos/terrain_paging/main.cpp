@@ -10,6 +10,7 @@
 #include <scene/Scene.hpp>
 #include <scene/SceneRenderer.hpp>
 #include <scene/TerrainPagingNode.hpp>
+#include <scene/LensFlareNode.hpp>
 #include <scene/AssetManager.hpp>
 
 // rolling hills + ridges — same character as the other terrain demos
@@ -27,7 +28,7 @@ int main(int argc, char** argv)
 
     DemoApp app;
     if (!app.Create("coregl - terrain paging")) return 1;
-    printf("controls: WASD/QE + mouse | LSHIFT fast | C page colors | F10 gif\n");
+    printf("controls: WASD/QE + mouse | LSHIFT fast | C page colors | F9 stats | F10 gif\n");
 
     SceneRenderer renderer;
     if (!renderer.init())
@@ -39,24 +40,30 @@ int main(int argc, char** argv)
     renderer.set_light_dir(Vec3(0.4f, -0.7f, 0.3f));
     renderer.set_sky_enabled(true);
     renderer.enable_shadows();
+    if (getenv("COREGL_STATS")) renderer.set_show_stats(true); // F9 toggles too
 
     Scene scene;
     assets::AssetManager& assets = assets::AssetManager::instance();
-    gl::Texture* grass = assets.loadTexture("grass", "assets/terrain/terrain-texture.jpg");
+    gl::Texture* grass = assets.loadTexture("grass", "assets/terrain/snow.jpg");
     gl::Texture* detail = assets.loadTexture("detail", "assets/terrain/detailmap3.jpg");
 
     TerrainPagingNode* terrain = scene.root().create_child<TerrainPagingNode>("world");
     terrain->set_page_size(257) // mobile/web: 129, desktop: 257
-        .set_cell_size(256.f)
-        .set_load_radius(600.f)
-        .set_hold_radius(850.f)
+        .set_cell_size(512.f)
+        .set_load_radius(1200.f)
+        .set_hold_radius(1600.f)
         .set_height_function(worldHeight)
-        .set_texture(grass, detail, 24.f);
+        .set_texture(grass, detail, 48.f);
+    // bounded world instead of infinite: terrain->set_extent(-4, -4, 3, 3);
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
     camera->set_perspective(60.f, 0.5f, 2000.f);
     camera->set_position(0.f, 60.f, 0.f);
 
+
+   
+    LensFlareNode* flare = scene.root().create_child<LensFlareNode>("sun_flare");
+    
     scene.set_active_camera(camera);
     scene.ready();
 
@@ -82,6 +89,8 @@ int main(int argc, char** argv)
                     debugColors = !debugColors;
                     terrain->set_debug_colors(debugColors);
                 }
+                if (ev.key.keysym.sym == SDLK_F9)
+                    renderer.set_show_stats(!renderer.show_stats());
                 if (ev.key.keysym.sym == SDLK_F10)
                 {
                     int gw, gh;
@@ -104,6 +113,7 @@ int main(int argc, char** argv)
 
         int w, h;
         app.DrawableSize(&w, &h);
+        terrain->set_lod_camera(60.f, h); // drives the de Boer LOD formula
         renderer.render(scene, w, h);
         perf.tick(frame, renderer.last_item_count(), dt);
         app.EndFrame();
@@ -114,6 +124,19 @@ int main(int argc, char** argv)
 
     printf("frames: %d | pages resident: %d | pages built total: %d\n", frame,
            terrain->page_count(), terrain->pages_built_total());
+    {
+        int histo[8] = {};
+        for (int cy = -8; cy <= 8; ++cy)
+            for (int cx = -8; cx <= 8; ++cx)
+            {
+                int l = terrain->lod_of_page(cx, cy);
+                if (l >= 0 && l < 8) ++histo[l];
+            }
+        printf("lod histogram:");
+        for (int l = 0; l < 8; ++l)
+            if (histo[l]) printf("  L%d=%d", l, histo[l]);
+        printf("\n");
+    }
     scene.release_gpu();
     assets.release();
     renderer.release();

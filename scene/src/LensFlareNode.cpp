@@ -1,5 +1,7 @@
-#include "scene/LensFlare.hpp"
+#include "scene/LensFlareNode.hpp"
 #include "scene/Camera3D.hpp"
+#include "scene/Pixmap.hpp"
+#include "flares_png.h"
 #include <coregl/gl_renderer.hpp>
 #include <algorithm>
 #include <cmath>
@@ -38,7 +40,7 @@ static bool loadStage(gl::Shader& shader, gl::PipelineStage stage, const char* b
 }
 
 // ── predefined flares ──
-void LensFlare::init_default_flares()
+void LensFlareNode::init_default_flares()
 {
     m_flares.clear();
     struct Clip { float x, y, w, h; };
@@ -73,7 +75,7 @@ void LensFlare::init_default_flares()
     }
 }
 
-float LensFlare::computeFade(const Vec2& ndc) const
+float LensFlareNode::computeFade(const Vec2& ndc) const
 {
     float mx = std::max(std::fabs(ndc.x), std::fabs(ndc.y));
     if (mx > 1.3f) return 0.f;
@@ -81,11 +83,35 @@ float LensFlare::computeFade(const Vec2& ndc) const
     return 1.f - (mx - 0.7f) / 0.6f;
 }
 
-LensFlare::~LensFlare() { release_gpu(); }
+LensFlareNode::LensFlareNode(const std::string& name)
+    : Node3D(name)
+{
+    m_type = NT_LENSFLARE;
+    init_default_flares();
+}
 
-bool LensFlare::ensure_gpu()
+LensFlareNode::~LensFlareNode() { release_gpu(); }
+
+bool LensFlareNode::ensure_gpu()
 {
     if (m_gpuReady) return true;
+
+    // Load flare atlas texture on first use
+    if (!m_texLoaded)
+    {
+        scene::Pixmap pm;
+        if (pm.load_from_memory(kFlarePng, kFlarePngLen))
+        {
+            m_tex.Load2D(pm.pixels, (int)pm.width, (int)pm.height, gl::TextureFormat::RGBA8);
+            m_tex.SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+            m_tex.SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+        }
+        else
+        {
+            m_tex.Load2D(nullptr, 1, 1, gl::TextureFormat::RGBA8);
+        }
+        m_texLoaded = true;
+    }
 
     if (!m_shader)
     {
@@ -136,16 +162,18 @@ bool LensFlare::ensure_gpu()
     return true;
 }
 
-void LensFlare::release_gpu()
+void LensFlareNode::release_gpu()
 {
     delete m_shader; m_shader = nullptr;
     m_vao.Release();
     m_vbo.Release();
     m_ibo.Release();
+    m_tex.Release();
+    m_texLoaded = false;
     m_gpuReady = false;
 }
 
-void LensFlare::buildGeometry(const Vec2& sunNDC, float fade, float aspect)
+void LensFlareNode::buildGeometry(const Vec2& sunNDC, float fade, float aspect)
 {
     int q = 0;
     for (const auto& fe : m_flares)
@@ -179,15 +207,14 @@ void LensFlare::buildGeometry(const Vec2& sunNDC, float fade, float aspect)
     m_vbo.Upload(m_scratchVerts.data(), m_scratchVerts.size() * sizeof(FVert));
 }
 
-u32 LensFlare::build(Camera3D& cam)
+u32 LensFlareNode::build(Camera3D& cam, const Vec3& sunDir)
 {
     if (!m_enabled || m_flares.empty()) return 0;
     if (!m_gpuReady && !ensure_gpu()) return 0;
     if (!m_shader) return 0;
 
     Vec3 camPos = cam.get_global_position();
-    // m_sunDir points toward the sun; place a reference point far in that direction
-    Vec3 sunWorld = camPos + m_sunDir * 5000.f;
+    Vec3 sunWorld = camPos + sunDir * 5000.f;
     Mat4 vp = cam.get_projection_matrix() * cam.get_view_matrix();
     Vec4 clip = vp * Vec4(sunWorld.x, sunWorld.y, sunWorld.z, 1.f);
     if (clip.w <= 0.f) return 0;

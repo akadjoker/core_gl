@@ -2,6 +2,7 @@
 
 #include "scene/Node3D.hpp"
 #include "scene/Math.hpp"
+#include "scene/Mesh.hpp" // MeshVertex
 #include <coregl/gl_types.hpp>
 #include <functional>
 #include <unordered_map>
@@ -15,12 +16,18 @@ class Mesh;
 class Material;
 class MeshInstance;
 
-// Paged terrain: one node = the whole world. Pages (tiles) are created and
-// destroyed around the camera following Ogre's Grid2DPageStrategy: cells
-// inside `load_radius` are loaded, cells between load and `hold_radius` are
-// kept if already loaded (hysteresis — no ping-pong at the border), anything
-// beyond is unloaded. At most one page mesh is built per frame so streaming
-// never hitches.
+// Paged terrain: one node = the whole world, bounded or infinite. Ported
+// from the Ogre sources in tmp/Paging and tmp/Terrain:
+//
+// - Streaming is Grid2DPageStrategy::notifyCamera: cells inside
+//   `load_radius` are loaded, cells between load and `hold_radius` are kept
+//   if already loaded (hysteresis), anything beyond is unloaded. At most one
+//   page mesh is built per frame after the initial prewarm.
+// - LOD is Terrain::preFindVisibleObjects (W. de Boer 2000): each page
+//   precomputes, per LOD level, the max height error that level introduces;
+//   a page renders at the finest level whose next-coarser error would exceed
+//   `max_pixel_error` on screen (distTransition = maxHeightDelta * cFactor).
+// - Cracks between pages at different LODs are hidden by skirts.
 //
 // Each page is an internal MeshInstance child, so it rides the existing
 // pipeline for free: per-page frustum culling, CSM shadows, forward pass.
@@ -51,18 +58,33 @@ public:
     // Ogre semantics, world units: load inside, keep until beyond hold
     TerrainPagingNode& set_load_radius(float r);
     TerrainPagingNode& set_hold_radius(float r);
+    // bounded world: pages only exist for minX..maxX, minY..maxY (cells,
+    // inclusive) — Ogre's cell range. Without it the world is infinite.
+    TerrainPagingNode& set_extent(gl::i32 minX, gl::i32 minY, gl::i32 maxX, gl::i32 maxY);
+    TerrainPagingNode& set_infinite(); // remove the extent (default)
+    // build every page inside the load radius before the first frame is
+    // seen, instead of one per frame (no pop-in at startup). Default on.
+    TerrainPagingNode& set_prewarm(bool on);
     TerrainPagingNode& set_height_function(HeightFn fn);
     // base texture stretches once per page; detail map tiles over it
     TerrainPagingNode& set_texture(gl::Texture* diffuse, gl::Texture* detail = nullptr,
                                    float detailScale = 40.f);
-    // tint each page a distinct color — makes streaming visible
+    // tint each page a distinct color — makes streaming/LOD visible
     TerrainPagingNode& set_debug_colors(bool on);
+
+    // ── LOD (Ogre defaults) ──
+    // max on-screen error in pixels before a page drops to a finer level
+    TerrainPagingNode& set_max_pixel_error(float px);
+    // the LOD formula needs the camera: vertical fov (degrees) and the
+    // viewport height in pixels. Call once, and again on resize.
+    TerrainPagingNode& set_lod_camera(float fovyDegrees, int viewportHeight);
 
     void set_camera_position(const Vec3& pos) { m_camPos = pos; }
 
     // ── stats ──
     int page_count() const { return (int)m_pages.size(); }
     int pages_built_total() const { return m_builtTotal; }
+    int lod_of_page(gl::i32 cx, gl::i32 cy) const; // -1 if not resident
 
     void _update(float dt) override;
     void _release_gpu() override;
@@ -73,6 +95,12 @@ private:
         Mesh* mesh = nullptr;
         Material* material = nullptr;
         MeshInstance* instance = nullptr;
+        // err[l] = max height error introduced by LOD level l (err[0]=0);
+        // Ogre: a page renders at level l while dist < err[l+1]*cFactor
+        std::vector<float> err;
+        Vec3 center;       // page centre, node-local (for LOD distance)
+        float radius = 0.f; // bounding radius (Ogre deducts half of it)
+        int lod = 0;
     };
 
     static gl::u64 page_key(gl::i32 x, gl::i32 y)
@@ -81,21 +109,33 @@ private:
     }
 
     void update_paging(); // Ogre Grid2DPageStrategy::notifyCamera logic
+    void update_lod();    // Ogre TerrainQuadTreeNode::calculateCurrentLod
     void build_page(gl::i32 cx, gl::i32 cy);
     void destroy_page(Page& p);
+    void build_indices(int lod); // fills m_idxScratch (grid + skirts)
+    int lod_levels() const;
 
     int m_pageSize = 129;     // verts per edge (2^n+1)
     float m_cellSize = 256.f; // world units per page edge
     float m_loadRadius = 500.f;
     float m_holdRadius = 700.f;
+    bool m_bounded = false;
+    gl::i32 m_minX = 0, m_minY = 0, m_maxX = 0, m_maxY = 0;
+    bool m_prewarm = true;
+    bool m_warmed = false;
     HeightFn m_heightFn;
     gl::Texture* m_diffuse = nullptr;
     gl::Texture* m_detail = nullptr;
     float m_detailScale = 40.f;
     bool m_debugColors = false;
 
+    float m_maxPixelError = 3.f; // Ogre TerrainGlobalOptions default
+    float m_cFactor = 0.f;       // A/T, 0 = LOD off (no camera params yet)
+
     Vec3 m_camPos = Vec3(0.f, 0.f, 0.f);
     std::unordered_map<gl::u64, Page> m_pages;
     std::vector<std::pair<gl::i32, gl::i32>> m_buildQueue; // reused each frame
+    std::vector<gl::u32> m_idxScratch;                     // reused per rebuild
+    std::vector<MeshVertex> m_vtxScratch;                  // reused per build
     int m_builtTotal = 0;
 };

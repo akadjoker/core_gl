@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scene/Math.hpp"
+#include "scene/Node3D.hpp"
 #include <coregl/gl_buffer.hpp>
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
@@ -9,15 +9,11 @@
 
 class Camera3D;
 
-// ── Lens flare: screen-space quads along the sun→screen-center axis ──
-//
-// Owns its VBO/IBO/VAO directly (no Mesh, since the vertex format is
-// simpler: pos3 + uv2 + color4).  SceneRenderer binds the shader/texture
-// and draws via vao() + index_count().
-
-class LensFlare
+class LensFlareNode : public Node3D
 {
 public:
+    static constexpr NodeType ClassType = NT_LENSFLARE;
+
     struct Element
     {
         float position = 0.f;
@@ -27,45 +23,52 @@ public:
         Vec4  pixelRect{0, 0, 0, 0};
     };
 
-    LensFlare() = default;
-    ~LensFlare();
+    explicit LensFlareNode(const std::string& name = "LensFlareNode");
+    ~LensFlareNode() override;
 
-    void set_sun_direction(const Vec3& d) { m_sunDir = d.normalized(); }
-    void set_sun_color(const Vec3& c)     { m_sunColor = c; }
-    void set_enabled(bool e)              { m_enabled = e; }
-    bool is_enabled() const               { return m_enabled; }
+    bool is_a(NodeType t) const override { return t == NT_LENSFLARE || Node3D::is_a(t); }
+
+    void set_enabled(bool e)  { m_enabled = e; }
+    bool is_enabled() const   { return m_enabled; }
+    void set_sun_color(const Vec3& c) { m_sunColor = c; }
 
     void add_flare(const Element& e) { m_flares.push_back(e); }
     void clear_flares()              { m_flares.clear(); }
     void init_default_flares();
 
-    // ── renderer-side ──
     bool ensure_gpu();
-    u32  build(Camera3D& cam);
+    u32  build(Camera3D& cam, const Vec3& sunDir);
     void release_gpu();
 
     gl::VertexArray& vao()          { return m_vao; }
     u32              index_count() const { return m_indexCount; }
     gl::Shader*      shader() const { return m_shader; }
+    gl::Texture&     tex()          { return m_tex; }
+
+protected:
+    void _release_gpu() override { release_gpu(); }
 
 private:
     struct FVert { float x, y, z; float u, v; float r, g, b, a; };
 
-    Vec3 m_sunDir{0, -1, 0}, m_sunColor{1, 1, 1};
+    Vec3 m_sunColor{1, 1, 1};
     bool m_enabled = true;
 
     float m_atlasW = 256.f, m_atlasH = 256.f;
     std::vector<Element> m_flares;
 
-    gl::Buffer     m_vbo, m_ibo;
+    gl::Buffer      m_vbo, m_ibo;
     gl::VertexArray m_vao;
-    gl::Shader*    m_shader = nullptr;
-    bool           m_gpuReady = false;
-    u32            m_indexCount = 0;
-    u32            m_capacity = 0; // max quads allocated
+    gl::Shader*     m_shader = nullptr;
+    bool            m_gpuReady = false;
+    u32             m_indexCount = 0;
+    u32             m_capacity = 0;
 
-    std::vector<FVert>  m_scratchVerts;
-    std::vector<u32>    m_scratchIdx;
+    gl::Texture m_tex;
+    bool        m_texLoaded = false;
+
+    std::vector<FVert> m_scratchVerts;
+    std::vector<u32>   m_scratchIdx;
 
     float computeFade(const Vec2& ndc) const;
     void  buildGeometry(const Vec2& sunNDC, float fade, float aspect);
