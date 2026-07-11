@@ -112,7 +112,7 @@ int main(int argc, char** argv)
 
     scene.set_active_camera(camera);
     scene.ready();
-
+  
     float camYaw = 0.f, camPitch = -0.18f;
     bool looking = false;
     bool showCascades = getenv("COREGL_SHOW_CASCADES") != nullptr;

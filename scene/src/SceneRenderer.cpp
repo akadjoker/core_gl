@@ -40,6 +40,14 @@ static void csmSplits(float nearClip, float farClip, float* splits, int numCasca
     }
 }
 
+static float casterDistanceForCascade(int c)
+{
+    static constexpr float kMinCasterDistance[] = {80.0f, 120.0f, 180.0f, 250.0f};
+
+    constexpr int count = int(sizeof(kMinCasterDistance) / sizeof(kMinCasterDistance[0]));
+
+    return kMinCasterDistance[Clamp(c, 0, count - 1)];
+}
 // One cascade's lightProjection * lightView. Ported verbatim from the
 // user's old engine (ShadowCascades::update) — this Sponza scene is what it
 // was proven against; do not re-derive this math.
@@ -93,7 +101,10 @@ static Mat4 csmCascadeMatrix(int cascade, float aspect, float fovDeg, const Mat4
         zmin = std::min(zmin, z);
         zmax = std::max(zmax, z);
     }
-    float zpad = (zmax - zmin) * 0.5f + 5.0f;
+    //   float zpad = (zmax - zmin) * 0.5f + 5.0f;
+    // float zpad = std::max((zmax - zmin) * 0.5f + 5.0f, 100.0f);
+
+    float zpad = std::max((zmax - zmin) * 0.5f + 5.0f, casterDistanceForCascade(cascade));
 
     Mat4 lightProj = Mat4::Ortho(-r, r, -r, r, -zmax - zpad, -zmin);
 
@@ -279,8 +290,7 @@ bool SceneRenderer::init()
     m_skinned.SetVec2("u_shadowMapSize", 2048.f, 2048.f);
 
     if (!loadStage(m_skinnedDepth, gl::PipelineStage::VERTEX, kSkinnedDepthVS) ||
-        !loadStage(m_skinnedDepth, gl::PipelineStage::FRAGMENT, kDepthFS) ||
-        !m_skinnedDepth.Link())
+        !loadStage(m_skinnedDepth, gl::PipelineStage::FRAGMENT, kDepthFS) || !m_skinnedDepth.Link())
         return false;
     m_locSkDepthMVP = m_skinnedDepth.GetLocation("u_lightMVP");
     m_locSkDepthBones0 = m_skinnedDepth.GetLocation("u_bones[0]");
@@ -527,8 +537,7 @@ void SceneRenderer::collect_lights(Node* node, std::vector<LightNode*>& out)
 // shadows.
 void SceneRenderer::draw_light_shadows(Scene& scene)
 {
-    m_shadow_items.clear();
-    scene.collect(m_shadow_items);
+ 
 
     gl::Renderer::SetDepthTest(true);
     gl::Renderer::SetDepthWrite(true);
@@ -563,8 +572,17 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
                 light->shadow_fbo().AttachCubeFace(light->shadow_tex(), gl::Attachment::DEPTH,
                                                    (gl::u32)face);
                 gl::Renderer::Clear(false, true);
-                Mat4 vp = proj * Mat4::LookAt(pos, pos + kFaceDir[face], kFaceUp[face]);
+                Mat4 viewFace = Mat4::LookAt(pos, pos + kFaceDir[face], kFaceUp[face]);
+                Mat4 vp = proj * viewFace;
                 m_pointDepth.SetMat4(m_locPDLightVP, vp.x);
+
+                // cull per cube face: only render surfaces within this face's
+                // 90° pyramid out to the light's range
+                Frustum faceFrustum;
+                faceFrustum.build(viewFace, proj);
+                m_shadow_items.clear();
+                scene.collect(m_shadow_items, &faceFrustum);
+
                 for (const RenderItem& item : m_shadow_items)
                 {
                     m_pointDepth.SetMat4(m_locPDModel, item.world.x);
@@ -588,10 +606,17 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
             // all usable depth into the last few thousandths of the map and
             // the compare bias then covers the whole scene (no shadow)
             const float nearPlane = spot->range * 0.05f;
-            Mat4 vp =
-                Mat4::Perspective((double)fovDeg, 1.0, (double)nearPlane, (double)spot->range) *
-                Mat4::LookAt(pos, pos + dir, Vec3(0.001f, 1.f, 0.001f));
+            Mat4 viewSpot = Mat4::LookAt(pos, pos + dir, Vec3(0.001f, 1.f, 0.001f));
+            Mat4 projSpot =
+                Mat4::Perspective((double)fovDeg, 1.0, (double)nearPlane, (double)spot->range);
+            Mat4 vp = projSpot * viewSpot;
             m_spotShadowMat[spotSlot] = vp;
+
+            // cull against the spot's own frustum cone
+            Frustum spotFrustum;
+            spotFrustum.build(viewSpot, projSpot);
+            m_shadow_items.clear();
+            scene.collect(m_shadow_items, &spotFrustum);
 
             m_depth.Bind();
             for (const RenderItem& item : m_shadow_items)
@@ -848,8 +873,7 @@ void SceneRenderer::draw_skinned(const RenderView& v, const Frustum& frustum)
         diffuse->Bind(0);
         m_gray.Bind(6);
         m_skinned.SetVec3(m_locSkColor, color.x, color.y, color.z);
-        m_skinned.SetVec2(m_locSkSpecular, mat ? mat->specular : 0.f,
-                          mat ? mat->shininess : 32.f);
+        m_skinned.SetVec2(m_locSkSpecular, mat ? mat->specular : 0.f, mat ? mat->shininess : 32.f);
         m_skinned.SetMat4(m_locSkModel, world.x);
         mesh.vao().Bind();
         for (const Surface& surf : mesh.surfaces())
@@ -1123,8 +1147,7 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
         Mat4 invViewProj = Mat4::Inverse(vp);
         sky->SetMat4("u_invViewProj", invViewProj.x);
         sky->SetVec3("u_cameraPos", v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
-        if (sky == &m_sky)
-            sky->SetVec3("u_sunDir", -m_lightDir.x, -m_lightDir.y, -m_lightDir.z);
+        if (sky == &m_sky) sky->SetVec3("u_sunDir", -m_lightDir.x, -m_lightDir.y, -m_lightDir.z);
         gl::Renderer::DrawFullscreenTriangle();
         gl::Renderer::SetDepthFunction(gl::DepthFunction::LESS);
         gl::Renderer::SetDepthWrite(true);
@@ -1166,8 +1189,14 @@ void SceneRenderer::draw_ocean_surface(OceanNode* o, const Mat4& view, const Mat
     o->refraction_tex().Bind(1);
     o->refraction_depth_tex().Bind(2);
     o->ensure_textures();
-    if (o->bump) o->bump->Bind(3); else o->builtin_bump().Bind(3);
-    if (o->foam) o->foam->Bind(4); else o->builtin_foam().Bind(4);
+    if (o->bump)
+        o->bump->Bind(3);
+    else
+        o->builtin_bump().Bind(3);
+    if (o->foam)
+        o->foam->Bind(4);
+    else
+        o->builtin_foam().Bind(4);
 
     o->quad().vao().Bind();
     gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, o->quad().index_count());
@@ -1186,8 +1215,7 @@ void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, cons
     // every surface alpha-fades at the waterline (soft shoreline) — one
     // blend setup for the whole pass
     gl::Renderer::SetBlend(true);
-    gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
-                                  gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+    gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
 
     for (WaterNode* w : m_waters)
     {
@@ -1307,7 +1335,6 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     collect_grass(&scene.root(), m_grassSystems);
     if (!m_grassSystems.empty()) draw_grass(proj * view);
 
-
     // water surfaces draw last, depth-tested against the scene (they land
     // in whatever target the main view used)
     if (!m_waters.empty())
@@ -1388,7 +1415,8 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     // frame clock: time between render() calls, smoothed for a stable readout
     {
         const auto now = std::chrono::steady_clock::now().time_since_epoch();
-        const gl::u64 ns = (gl::u64)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+        const gl::u64 ns =
+            (gl::u64)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
         if (m_lastFrameNs)
         {
             const float ms = (float)(ns - m_lastFrameNs) / 1e6f;
@@ -1435,8 +1463,7 @@ void SceneRenderer::draw_stats(int viewport_w, int viewport_h)
 
     gl::Renderer::SetDepthTest(false);
     gl::Renderer::SetBlend(true);
-    gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
-                                  gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+    gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
 
     m_statsBatch.SetColor(10, 14, 20, 190);
     m_statsBatch.Rect(8.f, 8.f, wMax + pad * 2.f, (float)n * lineH + pad * 2.f);

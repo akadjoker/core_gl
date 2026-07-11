@@ -34,7 +34,11 @@ int main(int argc, char** argv)
     }
     renderer.set_light_dir(Vec3(0.4f, -0.8f, 0.3f));
     renderer.set_sky_enabled(true);
-    renderer.enable_shadows();
+    // Scene is ~10 units across (sponza at scale 0.01). The default
+    // shadow_distance=200 with 4 cascades (caster padding 80-250!) keeps
+    // every surface in every cascade every frame. 2 cascades + distance=30
+    // is plenty for a small indoor scene and cuts shadow draw calls ~4×.
+    renderer.enable_shadows(2, 1024, 30.f);
     if (getenv("COREGL_STATS")) renderer.set_show_stats(true);
     if (getenv("COREGL_CASCADES")) renderer.set_show_cascades(true);
     if (getenv("COREGL_GIZMOS")) renderer.set_show_light_gizmos(true);
@@ -100,7 +104,7 @@ int main(int argc, char** argv)
         torch->color = Vec3(1.0f, 0.65f, 0.3f);
         torch->intensity = 1.4f;
         torch->range = 8.5f;
-        torch->cast_shadows = true; // 3 torches + the headlamp below = the 4-point-light budget
+        torch->cast_shadows = (i < 1); // only 1 torch shadows: 2 point-light shadow slots total
         if (i == 0) orbitLight = torch; // this one flies a circle + bob, see the update loop
     }
     const Vec3 orbitCenter = torchPos[0];
@@ -114,7 +118,10 @@ int main(int argc, char** argv)
     headlamp->color = Vec3(1.f, 1.f, 0.95f);
     headlamp->intensity = 2.2f;
     headlamp->range = 42.f;
-    headlamp->cast_shadows = true;
+    // headlamp follows the camera — casting shadows means 6 cube faces
+    // re-render the whole scene every frame. Disable it; the CSM sun
+    // shadows are enough for this scene.
+    headlamp->cast_shadows = false;
 
     scene.set_active_camera(camera);
     scene.ready();

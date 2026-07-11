@@ -82,7 +82,7 @@ int main(int argc, char** argv)
     // resolution to 4096 keeps roughly the same texels-per-world-unit
     // density Sponza had at 2048/200, so edges don't get blockier just
     // because the covered distance grew.
-    renderer.enable_shadows(4, 4096, extent * 1.3f);
+    renderer.enable_shadows(4, 1024, extent * 1.3f);
 
     std::vector<Material*> materials;
     materials.reserve(matDescs.size());
@@ -116,29 +116,26 @@ int main(int argc, char** argv)
         center + Vec3(extent * 0.2f, extent * 0.15f, extent * 0.1f),
         center + Vec3(0.f, extent * 0.25f, extent * 0.25f),
     };
-    PointLight* orbitLight = nullptr;
-    for (const Vec3& p : lightPos)
-    {
         PointLight* light = scene.root().create_child<PointLight>("plant_light");
+        const Vec3& p = lightPos[1];
         light->set_position(p);
-        light->color = Vec3(1.0f, 0.8f, 0.5f);
-        light->intensity = 1.5f;
+        light->color = Vec3(1.0f, 0.4f, 0.5f);
+        light->intensity = 100.5f;
         light->range = extent * 0.3f;
         light->cast_shadows = true;
-        if (!orbitLight) orbitLight = light;
-    }
+   
     const Vec3 orbitCenter = lightPos[0];
     const float orbitRadius = extent * 0.15f;
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
     camera->set_perspective(60.f, extent * 0.001f, extent * 4.f);
-    camera->set_position(center.x, center.y + extent * 0.3f, center.z + extent * 1.2f);
+    camera->set_position(-68.92, 20.31, 31.51);
 
     PointLight* headlamp = scene.root().create_child<PointLight>("headlamp");
     headlamp->color = Vec3(1.f, 1.f, 0.95f);
-    headlamp->intensity = 1.5f;
+    headlamp->intensity = 20.5f;
     headlamp->range = extent * 0.35f;
-    headlamp->cast_shadows = true; // 3 static lights already spend the shadow-caster budget
+    headlamp->cast_shadows = true; // moves with the camera every frame — same reason as orbitLight
 
     scene.set_active_camera(camera);
     scene.ready();
@@ -216,10 +213,10 @@ int main(int argc, char** argv)
 
         // one light flies a horizontal circle + bob around its start point
         static float orbitTime = 0.f;
-        if (orbitLight)
+        if (light)
         {
             orbitTime += dt * 0.8f;
-            orbitLight->set_position(orbitCenter.x + cosf(orbitTime) * orbitRadius,
+            light->set_position(orbitCenter.x + cosf(orbitTime) * orbitRadius,
                                      orbitCenter.y + sinf(orbitTime * 1.7f) * orbitRadius * 0.4f,
                                      orbitCenter.z + sinf(orbitTime) * orbitRadius);
         }

@@ -66,7 +66,7 @@ void main()
     v_worldPos = worldPos.xyz;
     v_normal = normalize(mat3(u_model) * a_normal);
     v_uv = a_uv;
-    v_viewDepth = -(u_view * worldPos).z; // positive distance ahead of the eye
+    v_viewDepth = -(u_view * worldPos).z;
     CLIP_SETUP(dot(worldPos, u_clipPlane));
     gl_Position = u_viewProj * worldPos;
 }
@@ -77,13 +77,15 @@ void main()
 // (cheaper where nobody can tell). Slope-scaled bias grows per cascade;
 // the fragment is offset along its normal before the light-space transform;
 // adjacent cascades cross-fade over the last 15% of each split so the
-// transition line never shows.
+// transition line never shows. 
+
 static const char* kFwdFS = R"(
 in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_worldPos;
 in float v_viewDepth;
 out vec4 OutColor;
+
 uniform vec3 u_baseColor;
 uniform vec3 u_lightDir; // direction the light travels (sun -> ground)
 uniform float u_unlit;
@@ -106,8 +108,8 @@ uniform vec4 u_pointColor[4];    // rgb premultiplied by intensity, w shadow slo
 uniform samplerCube u_pointShadow0;
 uniform samplerCube u_pointShadow1;
 uniform int u_spotCount;
-uniform vec4 u_spotPosRange[4];  // xyz position, w range
-uniform vec4 u_spotDirInner[4];  // xyz direction, w cos(inner half-angle)
+uniform vec4 u_spotPosRange[4];   // xyz position, w range
+uniform vec4 u_spotDirInner[4];   // xyz direction, w cos(inner half-angle)
 uniform vec4 u_spotColorOuter[4]; // rgb premultiplied, w cos(outer half-angle)
 uniform float u_spotShadowSlot[4]; // -1 none, else 0/1
 uniform mat4 u_spotShadowMat[2];
@@ -127,12 +129,13 @@ const vec2 kPoisson[16] = vec2[](
 
 float shadowSample(int layer, vec2 uv)
 {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
     return texture(u_shadowMap, vec3(uv, float(layer))).r;
 }
 
 float shadowBias(int layer, float baseBias, float slopeBias)
 {
-    float ndl = max(dot(normalize(v_normal), -u_lightDir), 0.0);
+    float ndl = max(dot(normalize(v_normal), normalize(-u_lightDir)), 0.0);
     return (baseBias + slopeBias * (1.0 - ndl)) * (1.0 + float(layer) * 0.2);
 }
 
@@ -165,11 +168,13 @@ float shadowGrid(int layer, vec3 p)
 // 0 = fully lit, 1 = fully shadowed
 float shadowOcclusion(int layer)
 {
-    // normal offset scales with the cascade (coarser texels farther away)
     vec3 offsetPos = v_worldPos + normalize(v_normal) * (0.05 + 0.05 * float(layer));
     vec4 lp = u_lightViewProj[layer] * vec4(offsetPos, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
-    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 0.0;
+
+    if (p.z < 0.0 || p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0)
+        return 0.0;
+
     if (layer <= 1) return shadowPoisson(layer, p);
     return shadowGrid(layer, p);
 }
@@ -188,20 +193,25 @@ float pointCubeSample(int slot, vec3 dir)
     return texture(u_pointShadow1, dir).r;
 }
 
-// 1 = lit, 0 = shadowed. The map stores length(frag - light) / range.
-// fragToLightRay = light position - fragment position (UNNORMALIZED: the
-// disk offsets are added to the raw ray, giving a sub-texel angular spread).
+// 1 = lit, 0 = shadowed.
 float pointShadowFactor(int slot, vec3 fragToLightRay, float range)
 {
-    float invZfar = 1.0 / range;
-    float currentDepth = (length(fragToLightRay) - 0.15) * invZfar;
-    float diskRadius = (1.0 + invZfar) * 0.04;
+    float dist = length(fragToLightRay);
+    float currentDepth = dist / range;
+
+    vec3 L = normalize(fragToLightRay);
+    float ndl = max(dot(normalize(v_normal), L), 0.0);
+    float bias = (0.01 + 0.04 * (1.0 - ndl)) / range;
+
+    float diskRadius = (1.0 + 1.0 / range) * 0.04;
     float shadowFactor = 0.0;
+
     for (int i = 0; i < 20; ++i)
-        shadowFactor +=
-            currentDepth > pointCubeSample(slot, kCubeDirs[i] * diskRadius - fragToLightRay)
-                ? 0.0
-                : 1.0;
+    {
+        float mapDepth = pointCubeSample(slot, kCubeDirs[i] * diskRadius - fragToLightRay);
+        shadowFactor += (currentDepth - bias) > mapDepth ? 0.0 : 1.0;
+    }
+
     return shadowFactor / 20.0;
 }
 
@@ -211,38 +221,39 @@ float spotMapSample(int slot, vec2 uv)
     return texture(u_spotShadow1, uv).r;
 }
 
-// 1 = lit, 0 = shadowed. Projective map, 3x3 PCF snapped to texel centers,
-// out-of-map means fully lit.
+// 1 = lit, 0 = shadowed.
 float spotShadowFactor(int slot, vec3 worldPos)
 {
     vec4 lp = u_spotShadowMat[slot] * vec4(worldPos, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
     float bias = 0.002;
-    if (p.x < 0.001 || p.x > 0.999 || p.y < 0.001 || p.y > 0.999) return 1.0;
-    if (p.z > 1.0 - bias || p.z < bias) return 1.0;
+
+    if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
+    if (p.z > 1.0 || p.z < 0.0) return 1.0;
+
     float compare = p.z - bias;
 
     vec2 texelSize =
         vec2(slot == 0 ? textureSize(u_spotShadow0, 0) : textureSize(u_spotShadow1, 0));
     vec2 texelSizeInv = 1.0 / texelSize;
-    vec2 pixelPos = p.xy * texelSize + vec2(0.5);
-    vec2 startTexel = (pixelPos - fract(pixelPos)) * texelSizeInv;
 
     float s = 0.0;
     for (int x = -1; x <= 1; ++x)
         for (int y = -1; y <= 1; ++y)
-            s += step(compare, spotMapSample(slot, startTexel + vec2(x, y) * texelSizeInv));
+            s += step(compare, spotMapSample(slot, p.xy + vec2(x, y) * texelSizeInv));
     return s / 9.0;
 }
 
 void main()
 {
     CLIP_APPLY;
+
     vec3 albedo = texture(u_diffuse, v_uv).rgb * u_baseColor;
     albedo *= texture(u_detail, v_uv * u_detailScale).rgb * 2.0;
 
     int layer = 0;
     float occlusion = 0.0;
+
     if (u_cascadeCount > 0)
     {
         layer = u_cascadeCount - 1;
@@ -254,23 +265,28 @@ void main()
                 break;
             }
         }
-        // cross-fade into the next cascade over the last 15% of this one
+
+        float shadow0 = shadowOcclusion(layer);
+
         if (layer < u_cascadeCount - 1)
         {
-            float edge = u_splits[layer];
-            float blend = smoothstep(edge * 0.85, edge, v_viewDepth);
+            float cascadeNear = (layer == 0) ? 0.0 : u_splits[layer - 1];
+            float cascadeFar = u_splits[layer];
+            float blendStart = mix(cascadeNear, cascadeFar, 0.85);
+            float blend = smoothstep(blendStart, cascadeFar, v_viewDepth);
+
             occlusion = (blend > 0.001)
-                            ? mix(shadowOcclusion(layer), shadowOcclusion(layer + 1), blend)
-                            : shadowOcclusion(layer);
+                            ? mix(shadow0, shadowOcclusion(layer + 1), blend)
+                            : shadow0;
         }
         else
         {
-            occlusion = shadowOcclusion(layer);
+            occlusion = shadow0;
         }
     }
 
     vec3 n = normalize(v_normal);
-    vec3 toLight = -u_lightDir;
+    vec3 toLight = normalize(-u_lightDir);
     float diffuse = max(dot(n, toLight), 0.0);
     vec3 viewDir = normalize(u_cameraPos - v_worldPos);
     float spec = pow(max(dot(n, normalize(toLight + viewDir)), 0.0), u_specular.y) * u_specular.x;
@@ -284,39 +300,49 @@ void main()
         vec3 toL = u_pointPosRange[i].xyz - v_worldPos;
         float dist = length(toL);
         float range = u_pointPosRange[i].w;
-        if (dist >= range) continue;
+        if (dist >= range || dist <= 0.0001) continue;
+
         float att = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
         att = att * att / (dist * dist + 1.0);
+
         vec3 L = toL / dist;
         float ndl = max(dot(n, L), 0.0);
         if (ndl <= 0.0 || att <= 0.0) continue;
+
         float sh = 1.0;
         int slot = int(u_pointColor[i].w);
         if (slot >= 0) sh = pointShadowFactor(slot, toL, range);
+
         float sp = pow(max(dot(n, normalize(L + viewDir)), 0.0), u_specular.y) * u_specular.x;
         color += u_pointColor[i].rgb * (albedo * ndl + vec3(sp)) * att * sh;
     }
+
     for (int i = 0; i < u_spotCount; ++i)
     {
         vec3 toL = u_spotPosRange[i].xyz - v_worldPos;
         float dist = length(toL);
         float range = u_spotPosRange[i].w;
-        if (dist >= range) continue;
+        if (dist >= range || dist <= 0.0001) continue;
+
         vec3 L = toL / dist;
-        // cone falloff between the outer and inner cosines, squared
-        float cosAng = dot(L, -u_spotDirInner[i].xyz);
+
+        float cosAng = dot(L, -normalize(u_spotDirInner[i].xyz));
         float cone = clamp((cosAng - u_spotColorOuter[i].w) /
-                               (u_spotDirInner[i].w - u_spotColorOuter[i].w),
+                               max(u_spotDirInner[i].w - u_spotColorOuter[i].w, 0.0001),
                            0.0, 1.0);
         cone *= cone;
         if (cone <= 0.0) continue;
+
         float att = clamp(1.0 - pow(dist / range, 4.0), 0.0, 1.0);
         att = att * att / (dist * dist + 1.0);
+
         float ndl = max(dot(n, L), 0.0);
-        if (ndl <= 0.0) continue;
+        if (ndl <= 0.0 || att <= 0.0) continue;
+
         float sh = 1.0;
         int slot = int(u_spotShadowSlot[i]);
         if (slot >= 0) sh = spotShadowFactor(slot, v_worldPos);
+
         float sp = pow(max(dot(n, normalize(L + viewDir)), 0.0), u_specular.y) * u_specular.x;
         color += u_spotColorOuter[i].rgb * (albedo * ndl + vec3(sp)) * att * cone * sh;
     }
@@ -325,13 +351,18 @@ void main()
 
     if (u_showCascades != 0 && u_cascadeCount > 0)
     {
-        const vec3 kTint[4] = vec3[](vec3(1.0, 0.6, 0.6), vec3(0.6, 1.0, 0.6),
-                                     vec3(0.6, 0.6, 1.0), vec3(1.0, 1.0, 0.6));
+        const vec3 kTint[4] = vec3[](
+            vec3(1.0, 0.6, 0.6),
+            vec3(0.6, 1.0, 0.6),
+            vec3(0.6, 0.6, 1.0),
+            vec3(1.0, 1.0, 0.6));
         color *= kTint[layer];
     }
+
     OutColor = vec4(color, 1.0);
 }
 )";
+
 
 // ── shadow depth pass: geometry into one cascade layer, no color ──
 static const char* kDepthVS = R"(
