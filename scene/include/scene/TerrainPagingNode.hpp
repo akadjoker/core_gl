@@ -11,6 +11,7 @@
 namespace gl
 {
 class Texture;
+class Shader;
 }
 class Mesh;
 class Material;
@@ -72,6 +73,30 @@ public:
     // tint each page a distinct color — makes streaming/LOD visible
     TerrainPagingNode& set_debug_colors(bool on);
 
+    // ── texture splatting (Ogre-style) ──
+    // layer 0 is the base; layers 1..4 are mixed on top by an RGBA blend
+    // map generated per page from the blend function. worldSize = world
+    // units one repeat of the texture covers. With layers set, pages are
+    // drawn by the renderer's splat pass instead of the forward pass.
+    TerrainPagingNode& set_layer(int i, gl::Texture* diffuse, float worldSize);
+    // weights for layers 1..4 at a world position; slope: 0 flat, 1 vertical
+    using BlendFn = std::function<void(float x, float z, float h, float slope, float w[4])>;
+    TerrainPagingNode& set_blend_function(BlendFn fn);
+    int layer_count() const { return m_layerCount; }
+    gl::Texture* layer_texture(int i) const { return m_layers[i].diffuse; }
+    float layer_tiling(int i) const { return m_cellSize / m_layers[i].worldSize; }
+
+    // ── editing ──
+    // effective height: height function + accumulated brush edits
+    float height_at(float x, float z) const;
+    // smooth circular brush, raises (amount > 0) or lowers; edits persist
+    // even when the page streams out and back in
+    void modify_height(float x, float z, float radius, float amount);
+
+    // renderer-facing: draws every resident page with the bound splat
+    // shader (frustum-culled); the renderer owns shader/layer binding
+    void render_pages(gl::Shader* shader, gl::i32 locModel, const Frustum* frustum);
+
     // ── LOD (Ogre defaults) ──
     // max on-screen error in pixels before a page drops to a finer level
     TerrainPagingNode& set_max_pixel_error(float px);
@@ -95,6 +120,7 @@ private:
         Mesh* mesh = nullptr;
         Material* material = nullptr;
         MeshInstance* instance = nullptr;
+        gl::Texture* blend = nullptr; // RGBA weights for layers 1..4 (splat mode)
         // err[l] = max height error introduced by LOD level l (err[0]=0);
         // Ogre: a page renders at level l while dist < err[l+1]*cFactor
         std::vector<float> err;
@@ -108,11 +134,14 @@ private:
         return ((gl::u64)(gl::u32)x << 32) | (gl::u64)(gl::u32)y;
     }
 
-    void update_paging(); // Ogre Grid2DPageStrategy::notifyCamera logic
-    void update_lod();    // Ogre TerrainQuadTreeNode::calculateCurrentLod
+    void update_paging(); 
+    void update_lod();    
     void build_page(gl::i32 cx, gl::i32 cy);
     void destroy_page(Page& p);
-    void build_indices(int lod); // fills m_idxScratch (grid + skirts)
+    void build_indices(int lod);              // fills m_idxScratch (grid + skirts)
+    void fill_vertices(gl::i32 cx, gl::i32 cy, float& hmin, float& hmax); // m_vtxScratch
+    void update_blend_map(Page& p, gl::i32 cx, gl::i32 cy); // from m_vtxScratch
+    void rebuild_page_geometry(Page& p, gl::i32 cx, gl::i32 cy); // after edits
     int lod_levels() const;
 
     int m_pageSize = 129;     // verts per edge (2^n+1)
@@ -129,8 +158,21 @@ private:
     float m_detailScale = 40.f;
     bool m_debugColors = false;
 
-    float m_maxPixelError = 3.f; // Ogre TerrainGlobalOptions default
-    float m_cFactor = 0.f;       // A/T, 0 = LOD off (no camera params yet)
+    float m_maxPixelError = 3.f; 
+    float m_cFactor = 0.f;        
+
+    struct Layer
+    {
+        gl::Texture* diffuse = nullptr;
+        float worldSize = 30.f;
+    };
+    Layer m_layers[5];
+    int m_layerCount = 0;
+    BlendFn m_blendFn;
+    // brush edits, keyed by page: n*n height deltas added on top of the
+    // height function — kept when the page unloads so edits survive paging
+    std::unordered_map<gl::u64, std::vector<float>> m_edits;
+    std::vector<gl::u8> m_blendScratch; // reused per blend-map build
 
     Vec3 m_camPos = Vec3(0.f, 0.f, 0.f);
     std::unordered_map<gl::u64, Page> m_pages;

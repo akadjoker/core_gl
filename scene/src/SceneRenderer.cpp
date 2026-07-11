@@ -8,6 +8,7 @@
 #include "scene/OceanNode.hpp"
 #include "scene/ParticleSystemNode.hpp"
 #include "scene/RibbonTrailNode.hpp"
+#include "scene/TerrainPagingNode.hpp"
 #include "scene/LensFlareNode.hpp"
 #include "scene/Camera3D.hpp"
 #include "scene/Pixmap.hpp"
@@ -603,6 +604,52 @@ void SceneRenderer::collect_ribbontrails(Node* node, std::vector<RibbonTrailNode
         collect_ribbontrails(child, out);
 }
 
+void SceneRenderer::collect_paged_terrain(Node* node, std::vector<TerrainPagingNode*>& out)
+{
+    TerrainPagingNode* t = node->as<TerrainPagingNode>();
+    if (t && t->layer_count() > 0) out.push_back(t); // splat mode only
+    for (Node* child : node->get_children())
+        collect_paged_terrain(child, out);
+}
+
+// Ogre-style texture splatting over the paged terrain: base layer + up to 4
+// layers mixed by each page's RGBA blend map. Runs inside draw_view, so the
+// same pass serves the main view and the water reflection/refraction views
+// (the vertex shader honors the view's clip plane).
+void SceneRenderer::draw_paged_terrain(const RenderView& v, const Frustum& frustum)
+{
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(true);
+    gl::Renderer::SetCull(gl::CullMode::BACK);
+    gl::Renderer::SetBlend(false);
+
+    m_terrainShader.Bind();
+    Mat4 vp = v.proj * v.view;
+    m_terrainShader.SetMat4(m_locTViewProj, vp.x);
+    m_terrainShader.SetMat4(m_locTView, v.view.x);
+    m_terrainShader.SetVec3(m_locTLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
+    m_terrainShader.SetVec3(m_locTAmbient, 0.30f, 0.30f, 0.32f);
+    m_terrainShader.SetVec4(m_locTClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
+                            v.clip_plane.w);
+
+    for (TerrainPagingNode* t : m_pagedTerrains)
+    {
+        const int n = t->layer_count();
+        m_terrainShader.SetInt("u_layerCount", n);
+        for (int i = 0; i < n; ++i)
+        {
+            char name[32];
+            snprintf(name, sizeof(name), "u_layerTiling[%d]", i);
+            gl::Texture* diff = t->layer_texture(i);
+            (diff ? diff : &m_white)->Bind((gl::u32)(2 + i));
+            m_terrainShader.SetFloat(name, t->layer_tiling(i));
+        }
+        t->render_pages(&m_terrainShader, m_locTModel, &frustum);
+    }
+
+    m_forward.Bind(); // draw_view continues with the forward shader state
+}
+
 // Alpha-cutout, not alpha-blend: depth test+write ON, no cull (blades are
 // single-sided planes meant to be seen from both faces), no blending or
 // sorting needed since a fragment is either fully there or fully gone.
@@ -832,6 +879,10 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
                                   item.first_index);
     }
 
+    // splat-mode paged terrain: opaque, in-view like any item (reflections
+    // and refraction included, clipped by the view's plane)
+    if (!m_pagedTerrains.empty()) draw_paged_terrain(v, frustum);
+
     if (m_sky_enabled)
     {
         // background: fills every pixel the opaque pass left at depth 1.0.
@@ -960,6 +1011,8 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
 
     m_waters.clear();
     collect_water(&scene.root(), m_waters);
+    m_pagedTerrains.clear();
+    collect_paged_terrain(&scene.root(), m_pagedTerrains);
 
     // ── extra views: one reflection + one refraction per water surface ──
     for (WaterNode* w : m_waters)

@@ -2,6 +2,9 @@
 #include "scene/Material.hpp"
 #include "scene/MeshInstance.hpp"
 #include <coregl/gl_log.hpp>
+#include <coregl/gl_renderer.hpp>
+#include <coregl/gl_shader.hpp>
+#include <coregl/gl_texture.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -17,6 +20,7 @@ TerrainPagingNode::~TerrainPagingNode()
     {
         delete kv.second.mesh;
         delete kv.second.material;
+        delete kv.second.blend;
     }
 }
 
@@ -346,15 +350,45 @@ void TerrainPagingNode::build_indices(int lod)
     }
 }
 
-void TerrainPagingNode::build_page(gl::i32 cx, gl::i32 cy)
+// height function + brush edits — sampled everywhere heights are needed so
+// edited pages keep consistent normals and neighbors keep matching edges
+float TerrainPagingNode::height_at(float x, float z) const
+{
+    float h = m_heightFn ? m_heightFn(x, z) : 0.f;
+
+    const gl::i32 cx = (gl::i32)floorf(x / m_cellSize);
+    const gl::i32 cy = (gl::i32)floorf(z / m_cellSize);
+    auto it = m_edits.find(page_key(cx, cy));
+    if (it == m_edits.end()) return h;
+
+    // bilinear read of the page's delta grid
+    const int n = m_pageSize;
+    const float step = m_cellSize / (float)(n - 1);
+    float fx = (x - (float)cx * m_cellSize) / step;
+    float fz = (z - (float)cy * m_cellSize) / step;
+    int i = (int)fx, j = (int)fz;
+    i = std::min(std::max(i, 0), n - 2);
+    j = std::min(std::max(j, 0), n - 2);
+    fx -= (float)i;
+    fz -= (float)j;
+    const std::vector<float>& d = it->second;
+    const float d00 = d[(size_t)j * n + i], d10 = d[(size_t)j * n + i + 1];
+    const float d01 = d[(size_t)(j + 1) * n + i], d11 = d[(size_t)(j + 1) * n + i + 1];
+    return h + (d00 * (1.f - fx) + d10 * fx) * (1.f - fz) + (d01 * (1.f - fx) + d11 * fx) * fz;
+}
+
+// grid vertices for page (cx,cy) into m_vtxScratch (skirt slots included
+// but not yet positioned — build_page/rebuild handle the skirt drop)
+void TerrainPagingNode::fill_vertices(gl::i32 cx, gl::i32 cy, float& hmin, float& hmax)
 {
     const int n = m_pageSize;
     const float step = m_cellSize / (float)(n - 1);
-    const float ox = (float)cx * m_cellSize; // page origin, node-local
+    const float ox = (float)cx * m_cellSize;
     const float oz = (float)cy * m_cellSize;
 
     m_vtxScratch.resize((size_t)n * n + (size_t)4 * n);
-    float hmin = 1e30f, hmax = -1e30f;
+    hmin = 1e30f;
+    hmax = -1e30f;
     for (int j = 0; j < n; ++j)
     {
         for (int i = 0; i < n; ++i)
@@ -362,11 +396,11 @@ void TerrainPagingNode::build_page(gl::i32 cx, gl::i32 cy)
             const float wx = ox + (float)i * step;
             const float wz = oz + (float)j * step;
             MeshVertex& v = m_vtxScratch[(size_t)j * n + i];
-            const float h = m_heightFn(wx, wz);
+            const float h = height_at(wx, wz);
             v.position = Vec3((float)i * step, h, (float)j * step);
             // central differences on the height source, step-sized
-            const float hl = m_heightFn(wx - step, wz), hr = m_heightFn(wx + step, wz);
-            const float hd = m_heightFn(wx, wz - step), hu = m_heightFn(wx, wz + step);
+            const float hl = height_at(wx - step, wz), hr = height_at(wx + step, wz);
+            const float hd = height_at(wx, wz - step), hu = height_at(wx, wz + step);
             v.normal = Vec3(hl - hr, 2.f * step, hd - hu).normalized();
             v.tangent = Vec4(1.f, 0.f, 0.f, 1.f);
             // base texture stretches once per page; detail map tiles over it
@@ -375,6 +409,16 @@ void TerrainPagingNode::build_page(gl::i32 cx, gl::i32 cy)
             if (h > hmax) hmax = h;
         }
     }
+}
+
+void TerrainPagingNode::build_page(gl::i32 cx, gl::i32 cy)
+{
+    const int n = m_pageSize;
+    const float ox = (float)cx * m_cellSize; // page origin, node-local
+    const float oz = (float)cy * m_cellSize;
+
+    float hmin, hmax;
+    fill_vertices(cx, cy, hmin, hmax);
 
     // per-LOD max height error: |real height - bilinear interp of the
     // coarser grid| over every skipped vertex (Ogre's height deltas)
@@ -435,15 +479,24 @@ void TerrainPagingNode::build_page(gl::i32 cx, gl::i32 cy)
     p.mesh->compute_bounds();
     p.mesh->upload_dynamic(); // LOD swaps the index buffer at runtime
 
-    p.material = new Material();
-    p.material->diffuse = m_diffuse;
-    p.material->detail = m_detail;
-    p.material->detail_scale = m_detailScale;
+    if (m_layerCount > 0)
+    {
+        // splat mode: the renderer's dedicated pass draws the page; the
+        // RGBA blend map mixes layers 1..4 over the base layer
+        update_blend_map(p, cx, cy);
+    }
+    else
+    {
+        p.material = new Material();
+        p.material->diffuse = m_diffuse;
+        p.material->detail = m_detail;
+        p.material->detail_scale = m_detailScale;
 
-    p.instance = create_child<MeshInstance>("page");
-    p.instance->set_mesh(p.mesh);
-    p.instance->set_material(p.material);
-    p.instance->set_position(ox, 0.f, oz);
+        p.instance = create_child<MeshInstance>("page");
+        p.instance->set_mesh(p.mesh);
+        p.instance->set_material(p.material);
+        p.instance->set_position(ox, 0.f, oz);
+    }
 
     p.err = std::move(err);
     p.center = Vec3(ox + m_cellSize * 0.5f, (hmin + hmax) * 0.5f, oz + m_cellSize * 0.5f);
@@ -457,6 +510,156 @@ void TerrainPagingNode::build_page(gl::i32 cx, gl::i32 cy)
     if (m_debugColors) set_debug_colors(true);
 }
 
+TerrainPagingNode& TerrainPagingNode::set_layer(int i, gl::Texture* diffuse, float worldSize)
+{
+    if (i < 0 || i >= 5) return *this;
+    m_layers[i].diffuse = diffuse;
+    m_layers[i].worldSize = worldSize > 0.1f ? worldSize : 0.1f;
+    m_layerCount = std::max(m_layerCount, i + 1);
+    return *this;
+}
+
+TerrainPagingNode& TerrainPagingNode::set_blend_function(BlendFn fn)
+{
+    m_blendFn = std::move(fn);
+    return *this;
+}
+
+// RGBA weights for layers 1..4, one texel per grid vertex, evaluated from
+// the blend function with the heights/normals already in m_vtxScratch
+void TerrainPagingNode::update_blend_map(Page& p, gl::i32 cx, gl::i32 cy)
+{
+    const int n = m_pageSize;
+    const float step = m_cellSize / (float)(n - 1);
+    const float ox = (float)cx * m_cellSize;
+    const float oz = (float)cy * m_cellSize;
+
+    m_blendScratch.resize((size_t)n * n * 4);
+    for (int j = 0; j < n; ++j)
+    {
+        for (int i = 0; i < n; ++i)
+        {
+            const MeshVertex& v = m_vtxScratch[(size_t)j * n + i];
+            float w[4] = {0.f, 0.f, 0.f, 0.f};
+            if (m_blendFn)
+                m_blendFn(ox + (float)i * step, oz + (float)j * step, v.position.y,
+                          1.f - v.normal.y, w);
+            gl::u8* px = &m_blendScratch[((size_t)j * n + i) * 4];
+            for (int c = 0; c < 4; ++c)
+                px[c] = (gl::u8)(std::min(std::max(w[c], 0.f), 1.f) * 255.f);
+        }
+    }
+
+    if (!p.blend) p.blend = new gl::Texture();
+    p.blend->Load2D(m_blendScratch.data(), n, n, gl::TextureFormat::RGBA8);
+    p.blend->SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+    p.blend->SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+}
+
+// refresh a page's vertices (and blend map) in place after a brush edit —
+// index buffer and LOD state stay as they are
+void TerrainPagingNode::rebuild_page_geometry(Page& p, gl::i32 cx, gl::i32 cy)
+{
+    const int n = m_pageSize;
+    float hmin, hmax;
+    fill_vertices(cx, cy, hmin, hmax);
+
+    // reposition the skirt ring under the new perimeter
+    const float skirtDrop = std::max(1.f, p.err[p.err.size() - 1] * 1.5f);
+    const gl::u32 skirtBase = (gl::u32)(n * n);
+    for (int k = 0; k < n; ++k)
+    {
+        m_vtxScratch[skirtBase + (size_t)k] = m_vtxScratch[(size_t)k];
+        m_vtxScratch[skirtBase + (size_t)n + k] = m_vtxScratch[(size_t)(n - 1) * n + k];
+        m_vtxScratch[skirtBase + (size_t)2 * n + k] = m_vtxScratch[(size_t)k * n];
+        m_vtxScratch[skirtBase + (size_t)3 * n + k] = m_vtxScratch[(size_t)k * n + (n - 1)];
+    }
+    for (int k = 0; k < 4 * n; ++k)
+        m_vtxScratch[skirtBase + (size_t)k].position.y -= skirtDrop;
+
+    p.mesh->update_vertices(m_vtxScratch.data(), (gl::u32)m_vtxScratch.size());
+    p.center.y = (hmin + hmax) * 0.5f;
+
+    if (m_layerCount > 0) update_blend_map(p, cx, cy);
+}
+
+// smooth cosine-falloff brush; every resident page the circle touches gets
+// its delta grid updated and its geometry refreshed. Edge vertices shared
+// by two pages receive identical deltas (same world position), so pages
+// stay stitched.
+void TerrainPagingNode::modify_height(float x, float z, float radius, float amount)
+{
+    if (radius <= 0.f) return;
+    const int n = m_pageSize;
+    const float step = m_cellSize / (float)(n - 1);
+
+    const gl::i32 cxmin = (gl::i32)floorf((x - radius) / m_cellSize);
+    const gl::i32 cxmax = (gl::i32)floorf((x + radius) / m_cellSize);
+    const gl::i32 cymin = (gl::i32)floorf((z - radius) / m_cellSize);
+    const gl::i32 cymax = (gl::i32)floorf((z + radius) / m_cellSize);
+
+    for (gl::i32 cy = cymin; cy <= cymax; ++cy)
+    {
+        for (gl::i32 cx = cxmin; cx <= cxmax; ++cx)
+        {
+            auto it = m_pages.find(page_key(cx, cy));
+            if (it == m_pages.end()) continue; // only resident pages are editable
+
+            std::vector<float>& d = m_edits[page_key(cx, cy)];
+            if (d.empty()) d.assign((size_t)n * n, 0.f);
+
+            const float ox = (float)cx * m_cellSize;
+            const float oz = (float)cy * m_cellSize;
+            bool touched = false;
+            for (int j = 0; j < n; ++j)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    const float dx = ox + (float)i * step - x;
+                    const float dz = oz + (float)j * step - z;
+                    const float dist = sqrtf(dx * dx + dz * dz);
+                    if (dist >= radius) continue;
+                    // cosine falloff: full strength at center, 0 at the rim
+                    d[(size_t)j * n + i] +=
+                        amount * (0.5f + 0.5f * cosf(3.14159265f * dist / radius));
+                    touched = true;
+                }
+            }
+            if (touched) rebuild_page_geometry(it->second, cx, cy);
+        }
+    }
+}
+
+// splat-mode draw, called by the renderer with the terrain shader bound and
+// layer textures on units 2..: per page, frustum-cull, bind the page's
+// blend map to unit 0 and issue the draw at its current LOD
+void TerrainPagingNode::render_pages(gl::Shader* shader, gl::i32 locModel,
+                                     const Frustum* frustum)
+{
+    const Mat4 base = get_global_transform();
+    for (auto& kv : m_pages)
+    {
+        Page& p = kv.second;
+        if (!p.mesh || !p.mesh->is_uploaded()) continue;
+
+        const gl::i32 cx = (gl::i32)(kv.first >> 32), cy = (gl::i32)(kv.first & 0xffffffffu);
+        Mat4 model = base * Mat4::Translate((float)cx * m_cellSize, 0.f, (float)cy * m_cellSize);
+
+        if (frustum && !p.mesh->surfaces().empty())
+        {
+            BoundingBox world =
+                BoundingBox::TransformBoundingBox(p.mesh->surfaces()[0].bounds, model);
+            if (!frustum->ContainsBox(world)) continue;
+        }
+
+        if (p.blend) p.blend->Bind(0);
+        shader->SetMat4(locModel, model.x);
+        p.mesh->vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES,
+                                  p.mesh->surfaces()[0].index_count);
+    }
+}
+
 void TerrainPagingNode::destroy_page(Page& p)
 {
     if (p.instance)
@@ -465,6 +668,8 @@ void TerrainPagingNode::destroy_page(Page& p)
         delete p.instance;
     }
     if (p.mesh) p.mesh->release_gpu();
+    if (p.blend) p.blend->Release();
+    delete p.blend;
     delete p.mesh;
     delete p.material;
     p = Page{};
@@ -473,5 +678,8 @@ void TerrainPagingNode::destroy_page(Page& p)
 void TerrainPagingNode::_release_gpu()
 {
     for (auto& kv : m_pages)
+    {
         if (kv.second.mesh) kv.second.mesh->release_gpu();
+        if (kv.second.blend) kv.second.blend->Release();
+    }
 }

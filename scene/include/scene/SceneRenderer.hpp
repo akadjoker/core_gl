@@ -19,6 +19,7 @@ class ParticleSystemNode;
 class DecalSystemNode;
 class GrassSystemNode;
 class RibbonTrailNode;
+class TerrainPagingNode;
 
 // Draws a Scene. This is the engine-side boundary: game code builds the node
 // tree and calls render() — it never touches coregl directly.
@@ -122,6 +123,9 @@ private:
     static void collect_grass(Node* node, std::vector<GrassSystemNode*>& out);
     void draw_ribbontrails(const Mat4& viewProj);
     static void collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out);
+    // splat-mode paged terrain, drawn inside every view (reflections too)
+    void draw_paged_terrain(const RenderView& v, const Frustum& frustum);
+    static void collect_paged_terrain(Node* node, std::vector<TerrainPagingNode*>& out);
     void draw_lensflares(Camera3D& cam);
     static void collect_lensflares(Node* node, std::vector<class LensFlareNode*>& out);
 
@@ -204,6 +208,7 @@ private:
     gl::i32 m_locGViewProj = -1;
     std::vector<GrassSystemNode*> m_grassSystems;       // reused across frames
     std::vector<RibbonTrailNode*> m_ribbonTrails;       // reused across frames
+    std::vector<TerrainPagingNode*> m_pagedTerrains;    // reused across frames
 
     // procedural sky pass
     gl::Shader m_sky;
