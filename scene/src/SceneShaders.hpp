@@ -5,6 +5,43 @@
 // which supplies the GLSL version, precision qualifiers and the clip-plane
 // macros (CLIP_VARYING / CLIP_SETUP / CLIP_APPLY) for the platform.
 
+// GPU skinning vertex shader: kFwdVS plus the weights stream (locations 4
+// ids as float, 5 weights) and the bone palette. Links against the SAME
+// kFwdFS, so skinned meshes get the full forward lighting/shadow path.
+static const char* kSkinnedVS = R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_tangent;
+layout(location = 3) in vec2 a_uv;
+layout(location = 4) in vec4 a_boneIds;
+layout(location = 5) in vec4 a_weights;
+uniform mat4 u_model;
+uniform mat4 u_viewProj;
+uniform mat4 u_view;
+uniform vec4 u_clipPlane;
+uniform mat4 u_bones[80];
+out vec3 v_normal;
+out vec2 v_uv;
+out vec3 v_worldPos;
+out float v_viewDepth;
+CLIP_VARYING
+void main()
+{
+    mat4 skin = u_bones[int(a_boneIds.x)] * a_weights.x +
+                u_bones[int(a_boneIds.y)] * a_weights.y +
+                u_bones[int(a_boneIds.z)] * a_weights.z +
+                u_bones[int(a_boneIds.w)] * a_weights.w;
+    vec4 skinned = skin * vec4(a_position, 1.0);
+    vec4 worldPos = u_model * skinned;
+    v_worldPos = worldPos.xyz;
+    v_normal = normalize(mat3(u_model) * (mat3(skin) * a_normal));
+    v_uv = a_uv;
+    v_viewDepth = -(u_view * worldPos).z;
+    CLIP_SETUP(dot(worldPos, u_clipPlane));
+    gl_Position = u_viewProj * worldPos;
+}
+)";
+
 // ── built-in forward shader (lambert + ambient, diffuse map, clip plane) ──
 // All shader bodies are version-less: Renderer::ShaderHeader() is prepended
 // at init, providing the right GLSL version, precision and clip macros for
@@ -309,6 +346,24 @@ void main()
 static const char* kDepthFS = R"(
 void main()
 {
+}
+)";
+
+// skinned depth pass: same 4-bone skin as kSkinnedVS, position only —
+// characters cast CSM shadows like everything else
+static const char* kSkinnedDepthVS = R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 4) in vec4 a_boneIds;
+layout(location = 5) in vec4 a_weights;
+uniform mat4 u_lightMVP;
+uniform mat4 u_bones[80];
+void main()
+{
+    mat4 skin = u_bones[int(a_boneIds.x)] * a_weights.x +
+                u_bones[int(a_boneIds.y)] * a_weights.y +
+                u_bones[int(a_boneIds.z)] * a_weights.z +
+                u_bones[int(a_boneIds.w)] * a_weights.w;
+    gl_Position = u_lightMVP * (skin * vec4(a_position, 1.0));
 }
 )";
 

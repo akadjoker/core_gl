@@ -46,11 +46,25 @@ public:
     float foam_speed = 0.04f;    // foam scroll
     float foam_intensity = 0.7f; // 0..1
 
-    gl::Texture* bump = nullptr; // non-owning (AssetManager)
+    gl::Texture* bump = nullptr; // non-owning (AssetManager); if null, uses embedded
     gl::Texture* foam = nullptr;
 
     int grid_resolution = 200; // cells per side of the displaceable grid
 
+    // generates procedural bump + foam textures if external ones aren't set;
+    // called lazily by the renderer before drawing. Safe to call repeatedly.
+    void ensure_textures();
+    void release_textures();
+
+    gl::Texture& builtin_bump() { return m_builtinBump; }
+    gl::Texture& builtin_foam() { return m_builtinFoam; }
+
 protected:
     void build_surface(Mesh& mesh) override;
+    void _release_gpu() override { release_textures(); }
+
+private:
+    gl::Texture m_builtinBump;  // procedural normal map (rg perturbation)
+    gl::Texture m_builtinFoam;  // procedural white-noise foam pattern (R8)
+    bool m_texturesReady = false;
 };

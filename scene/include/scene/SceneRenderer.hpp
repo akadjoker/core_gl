@@ -20,6 +20,7 @@ class DecalSystemNode;
 class GrassSystemNode;
 class RibbonTrailNode;
 class TerrainPagingNode;
+class SkinnedMeshInstance;
 
 // Draws a Scene. This is the engine-side boundary: game code builds the node
 // tree and calls render() — it never touches coregl directly.
@@ -143,6 +144,9 @@ private:
     static void collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out);
     // splat-mode paged terrain, drawn inside every view (reflections too)
     void draw_paged_terrain(const RenderView& v, const Frustum& frustum);
+    // GPU-skinned characters (kSkinnedVS + the forward FS)
+    void draw_skinned(const RenderView& v, const Frustum& frustum);
+    static void collect_skinned(Node* node, std::vector<SkinnedMeshInstance*>& out);
     static void collect_paged_terrain(Node* node, std::vector<TerrainPagingNode*>& out);
     void draw_lensflares(Camera3D& cam);
     static void collect_lensflares(Node* node, std::vector<class LensFlareNode*>& out);
@@ -227,6 +231,16 @@ private:
     std::vector<GrassSystemNode*> m_grassSystems;       // reused across frames
     std::vector<RibbonTrailNode*> m_ribbonTrails;       // reused across frames
     std::vector<TerrainPagingNode*> m_pagedTerrains;    // reused across frames
+    std::vector<SkinnedMeshInstance*> m_skinnedMeshes;   // reused across frames
+
+    // skinned forward pass (bone palette in u_bones[])
+    gl::Shader m_skinned;
+    gl::i32 m_locSkModel = -1, m_locSkViewProj = -1, m_locSkView = -1;
+    gl::i32 m_locSkClipPlane = -1, m_locSkBones0 = -1, m_locSkColor = -1;
+    gl::i32 m_locSkLightDir = -1, m_locSkCameraPos = -1, m_locSkSpecular = -1;
+    gl::i32 m_locSkCascadeMat0 = -1, m_locSkSplits0 = -1, m_locSkCascadeCount = -1;
+    gl::Shader m_skinnedDepth; // characters into the CSM cascades
+    gl::i32 m_locSkDepthMVP = -1, m_locSkDepthBones0 = -1;
 
     // sky passes: procedural gradient, cubemap skybox, equirect skydome
     gl::Shader m_sky;

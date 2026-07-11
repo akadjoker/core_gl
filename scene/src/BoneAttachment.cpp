@@ -19,10 +19,19 @@ void BoneAttachment::set_offset(const Vec3& pos, const Quaternion& rot)
     m_offsetRot = rot;
 }
 
+// copies the bone's evaluated global (instance-model space) into this
+// node's local transform. As a CHILD of the instance that puts children
+// exactly on the bone; the offset corrects the grip.
 void BoneAttachment::_update(float dt)
 {
     (void)dt;
-    if (!m_target || m_bone < 0) return;
-    // TODO(evening): decompose m_target->bone_globals()[m_bone] (+offset)
-    // into this node's local transform (relative to our parent)
+    if (!m_target || m_bone < 0 || m_bone >= (int)m_target->bone_globals().size()) return;
+
+    Mat4 boneWorld = m_target->bone_globals()[(size_t)m_bone] *
+                     (Mat4::Translate(m_offsetPos) * Mat4::Rotate(m_offsetRot));
+    Vec3 t, r, s;
+    boneWorld.decompose(t, r, s);
+    set_position(t);
+    set_euler(r);
+    set_scale(s);
 }

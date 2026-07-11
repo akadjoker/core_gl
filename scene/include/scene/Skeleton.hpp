@@ -50,7 +50,12 @@ public:
     // building (MeshLoader/SkinnedMesh use this while parsing SKEL)
     void add_bone(const char* name, gl::i32 parent, const Mat4& bindLocal,
                   const Mat4& inverseBind);
+    // call once after the last add_bone: builds the topological evaluation
+    // order (exporters often sort bones alphabetically — evaluating in file
+    // order would read parents one frame late on out-of-order bones)
+    void finalize();
 
 private:
     std::vector<Bone> m_bones;
+    std::vector<gl::u16> m_order; // parents always before children
 };

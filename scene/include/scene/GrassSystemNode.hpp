@@ -8,7 +8,7 @@ namespace gl
 class Texture;
 }
 
-// Ported from tmp/core/GrassSystem: crossed billboard quads (Single/Cross/
+// crossed billboard quads (Single/Cross/
 // TriCross) built once into a STATIC mesh — unlike particles/decals, grass
 // never changes after build(), so there is no per-frame VBO rebuild. The
 // SceneRenderer draws it with a dedicated shader: wind sway in the vertex

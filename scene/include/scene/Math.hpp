@@ -773,6 +773,41 @@ struct Quaternion
         out.normalize();
         return out;
     }
+
+    // rotation part of a column-major 3x3 (rows indexed [row][col]) —
+    // Shepperd's method, as Ogre's Quaternion::FromRotationMatrix: pick the
+    // largest diagonal term so the divisor is never tiny. The matrix must be
+    // pure rotation (normalize scale out first). Euler round-trips lose
+    // orientation near gimbal; this never does.
+    static Quaternion FromRotation(const float r[3][3])
+    {
+        Quaternion q;
+        const float trace = r[0][0] + r[1][1] + r[2][2];
+        if (trace > 0.f)
+        {
+            float root = sqrtf(trace + 1.f); // 2w
+            q.w = 0.5f * root;
+            root = 0.5f / root;
+            q.x = (r[2][1] - r[1][2]) * root;
+            q.y = (r[0][2] - r[2][0]) * root;
+            q.z = (r[1][0] - r[0][1]) * root;
+        }
+        else
+        {
+            int i = 0;
+            if (r[1][1] > r[0][0]) i = 1;
+            if (r[2][2] > r[i][i]) i = 2;
+            const int j = (i + 1) % 3, k = (j + 1) % 3;
+            float root = sqrtf(r[i][i] - r[j][j] - r[k][k] + 1.f);
+            float* apk[3] = {&q.x, &q.y, &q.z};
+            *apk[i] = 0.5f * root;
+            root = 0.5f / root;
+            q.w = (r[k][j] - r[j][k]) * root;
+            *apk[j] = (r[j][i] + r[i][j]) * root;
+            *apk[k] = (r[k][i] + r[i][k]) * root;
+        }
+        return q;
+    }
     static Quaternion LookRotation(const Vec3& forwardRaw, const Vec3& upRaw)
     {
         Vec3 f = forwardRaw.normalized();

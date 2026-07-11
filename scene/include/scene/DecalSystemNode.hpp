@@ -10,7 +10,7 @@ namespace gl
 class Texture;
 }
 
-// Ported from tmp/core/DecalSystem: quads projected onto a surface (bullet
+// quads projected onto a surface (bullet
 // marks, blood, scorch), oriented by the hit NORMAL (not billboarded —
 // that's the one real difference from ParticleSystemNode) and fading over
 // their lifetime. Same buffer strategy as particles: bakes into a Mesh

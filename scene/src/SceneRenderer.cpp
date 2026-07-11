@@ -9,6 +9,8 @@
 #include "scene/ParticleSystemNode.hpp"
 #include "scene/RibbonTrailNode.hpp"
 #include "scene/TerrainPagingNode.hpp"
+#include "scene/SkinnedMesh.hpp"
+#include "scene/SkinnedMeshInstance.hpp"
 #include "scene/LensFlareNode.hpp"
 #include "scene/Camera3D.hpp"
 #include "scene/Pixmap.hpp"
@@ -233,6 +235,44 @@ bool SceneRenderer::init()
         m_terrainShader.SetInt(name, 2 + i);
     }
     m_terrainShader.SetInt("u_layerCount", 0);
+
+    // skinned forward: kSkinnedVS + the SAME forward FS = full lighting
+    if (!loadStage(m_skinned, gl::PipelineStage::VERTEX, kSkinnedVS) ||
+        !loadStage(m_skinned, gl::PipelineStage::FRAGMENT, kFwdFS) || !m_skinned.Link())
+        return false;
+    m_locSkModel = m_skinned.GetLocation("u_model");
+    m_locSkViewProj = m_skinned.GetLocation("u_viewProj");
+    m_locSkView = m_skinned.GetLocation("u_view");
+    m_locSkClipPlane = m_skinned.GetLocation("u_clipPlane");
+    m_locSkBones0 = m_skinned.GetLocation("u_bones[0]");
+    m_locSkColor = m_skinned.GetLocation("u_baseColor");
+    m_locSkLightDir = m_skinned.GetLocation("u_lightDir");
+    m_locSkCameraPos = m_skinned.GetLocation("u_cameraPos");
+    m_locSkSpecular = m_skinned.GetLocation("u_specular");
+    m_locSkCascadeMat0 = m_skinned.GetLocation("u_lightViewProj[0]");
+    m_locSkSplits0 = m_skinned.GetLocation("u_splits[0]");
+    m_locSkCascadeCount = m_skinned.GetLocation("u_cascadeCount");
+    m_skinned.Bind();
+    m_skinned.SetInt("u_diffuse", 0);
+    m_skinned.SetInt("u_shadowMap", 1);
+    m_skinned.SetInt("u_detail", 6);
+    m_skinned.SetInt("u_pointShadow0", 2);
+    m_skinned.SetInt("u_pointShadow1", 3);
+    m_skinned.SetInt("u_spotShadow0", 4);
+    m_skinned.SetInt("u_spotShadow1", 5);
+    m_skinned.SetInt(m_locSkCascadeCount, 0);
+    m_skinned.SetInt("u_pointCount", 0); // local lights on skinned: later
+    m_skinned.SetInt("u_spotCount", 0);
+    m_skinned.SetFloat("u_unlit", 0.f);
+    m_skinned.SetFloat("u_detailScale", 1.f);
+    m_skinned.SetVec2("u_shadowMapSize", 2048.f, 2048.f);
+
+    if (!loadStage(m_skinnedDepth, gl::PipelineStage::VERTEX, kSkinnedDepthVS) ||
+        !loadStage(m_skinnedDepth, gl::PipelineStage::FRAGMENT, kDepthFS) ||
+        !m_skinnedDepth.Link())
+        return false;
+    m_locSkDepthMVP = m_skinnedDepth.GetLocation("u_lightMVP");
+    m_locSkDepthBones0 = m_skinnedDepth.GetLocation("u_bones[0]");
     m_terrainShader.SetInt("u_shadowMap", 10); // CSM array, past the layer units
     m_terrainShader.SetInt("u_cascadeCount", 0);
 
@@ -271,6 +311,8 @@ void SceneRenderer::release()
     m_particle.Release();
     m_grass.Release();
     m_terrainShader.Release();
+    m_skinned.Release();
+    m_skinnedDepth.Release();
     m_tonemap.Release();
     m_godray.Release();
     if (m_statsBatchReady) m_statsBatch.Release();
@@ -423,6 +465,29 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
         // culled against the same cascade frustum, at their current LOD
         for (TerrainPagingNode* t : m_pagedTerrains)
             t->render_pages_depth(&m_depth, m_locDepthMVP, m_cascadeMat[c], &cascadeFrustum);
+
+        // skinned characters cast with their current pose
+        if (!m_skinnedMeshes.empty())
+        {
+            m_skinnedDepth.Bind();
+            for (SkinnedMeshInstance* sk : m_skinnedMeshes)
+            {
+                SkinnedMesh* res = sk->get_mesh();
+                if (!res || !res->ensure_gpu()) continue;
+                const std::vector<Mat4>& palette = sk->palette();
+                const int nBones = (int)palette.size() > 80 ? 80 : (int)palette.size();
+                for (int i = 0; i < nBones; ++i)
+                    m_skinnedDepth.SetMat4(m_locSkDepthBones0 + i, palette[(size_t)i].x);
+                Mat4 mvp = m_cascadeMat[c] * sk->get_global_transform();
+                m_skinnedDepth.SetMat4(m_locSkDepthMVP, mvp.x);
+                Mesh& mesh = res->mesh();
+                mesh.vao().Bind();
+                for (const Surface& surf : mesh.surfaces())
+                    gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, surf.index_count,
+                                              surf.first_index);
+            }
+            m_depth.Bind(); // next cascade continues with the static depth shader
+        }
     }
     gl::Renderer::SetPolygonOffset(false);
 }
@@ -708,6 +773,82 @@ void SceneRenderer::draw_paged_terrain(const RenderView& v, const Frustum& frust
     m_forward.Bind(); // draw_view continues with the forward shader state
 }
 
+void SceneRenderer::collect_skinned(Node* node, std::vector<SkinnedMeshInstance*>& out)
+{
+    SkinnedMeshInstance* s = node->as<SkinnedMeshInstance>();
+    if (s && s->get_mesh()) out.push_back(s);
+    for (Node* child : node->get_children())
+        collect_skinned(child, out);
+}
+
+// GPU skinning: one draw per instance, palette in u_bones[]. Linked against
+// the forward FS, so sun light, CSM shadows and specular all apply.
+void SceneRenderer::draw_skinned(const RenderView& v, const Frustum& frustum)
+{
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(true);
+    gl::Renderer::SetCull(gl::CullMode::BACK);
+    gl::Renderer::SetBlend(false);
+
+    m_skinned.Bind();
+    Mat4 vp = v.proj * v.view;
+    m_skinned.SetMat4(m_locSkViewProj, vp.x);
+    m_skinned.SetMat4(m_locSkView, v.view.x);
+    m_skinned.SetVec3(m_locSkLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
+    m_skinned.SetVec3(m_locSkCameraPos, v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
+    m_skinned.SetVec4(m_locSkClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
+                      v.clip_plane.w);
+    m_skinned.SetInt(m_locSkCascadeCount, m_cascades);
+    if (m_cascades > 0)
+    {
+        m_shadowTex.Bind(1);
+        m_skinned.SetVec2("u_shadowMapSize", (float)m_shadowSize, (float)m_shadowSize);
+        for (int i = 0; i < m_cascades; ++i)
+        {
+            m_skinned.SetMat4(m_locSkCascadeMat0 + i, m_cascadeMat[i].x);
+            m_skinned.SetFloat(m_locSkSplits0 + i, m_splits[i + 1]);
+        }
+    }
+
+    for (SkinnedMeshInstance* s : m_skinnedMeshes)
+    {
+        SkinnedMesh* res = s->get_mesh();
+        if (!res || !res->ensure_gpu()) continue;
+
+        const Mat4 world = s->get_global_transform();
+        Mesh& mesh = res->mesh();
+        if (!mesh.surfaces().empty())
+        {
+            // whole-character cull with the first surface's bounds
+            BoundingBox bb = BoundingBox::TransformBoundingBox(mesh.surfaces()[0].bounds, world);
+            for (size_t i = 1; i < mesh.surfaces().size(); ++i)
+                bb.Merge(BoundingBox::TransformBoundingBox(mesh.surfaces()[i].bounds, world));
+            if (!frustum.ContainsBox(bb)) continue;
+        }
+
+        const std::vector<Mat4>& palette = s->palette();
+        const int nBones = (int)palette.size() > 80 ? 80 : (int)palette.size();
+        for (int i = 0; i < nBones; ++i)
+            m_skinned.SetMat4(m_locSkBones0 + i, palette[(size_t)i].x);
+
+        const Material* mat = s->get_material();
+        Vec3 color = mat ? mat->base_color : Vec3(1.f, 1.f, 1.f);
+        gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
+        diffuse->Bind(0);
+        m_gray.Bind(6);
+        m_skinned.SetVec3(m_locSkColor, color.x, color.y, color.z);
+        m_skinned.SetVec2(m_locSkSpecular, mat ? mat->specular : 0.f,
+                          mat ? mat->shininess : 32.f);
+        m_skinned.SetMat4(m_locSkModel, world.x);
+        mesh.vao().Bind();
+        for (const Surface& surf : mesh.surfaces())
+            gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, surf.index_count,
+                                      surf.first_index);
+    }
+
+    m_forward.Bind(); // draw_view continues with the forward shader
+}
+
 // Alpha-cutout, not alpha-blend: depth test+write ON, no cull (blades are
 // single-sided planes meant to be seen from both faces), no blending or
 // sorting needed since a fragment is either fully there or fully gone.
@@ -941,6 +1082,9 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     // and refraction included, clipped by the view's plane)
     if (!m_pagedTerrains.empty()) draw_paged_terrain(v, frustum);
 
+    // skinned characters: opaque, forward-lit, per-instance bone palette
+    if (!m_skinnedMeshes.empty()) draw_skinned(v, frustum);
+
     if (m_sky_enabled || m_skybox || m_skydome)
     {
         // background: fills every pixel the opaque pass left at depth 1.0.
@@ -1010,8 +1154,9 @@ void SceneRenderer::draw_ocean_surface(OceanNode* o, const Mat4& view, const Mat
     o->reflection_tex().Bind(0);
     o->refraction_tex().Bind(1);
     o->refraction_depth_tex().Bind(2);
-    if (o->bump) o->bump->Bind(3);
-    if (o->foam) o->foam->Bind(4);
+    o->ensure_textures();
+    if (o->bump) o->bump->Bind(3); else o->builtin_bump().Bind(3);
+    if (o->foam) o->foam->Bind(4); else o->builtin_foam().Bind(4);
 
     o->quad().vao().Bind();
     gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, o->quad().index_count());
@@ -1077,6 +1222,8 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     // collected before the shadow pass: splat pages cast shadows too
     m_pagedTerrains.clear();
     collect_paged_terrain(&scene.root(), m_pagedTerrains);
+    m_skinnedMeshes.clear();
+    collect_skinned(&scene.root(), m_skinnedMeshes);
 
     // ── shadow views: one depth-only view per cascade ──
     if (m_cascades > 0) draw_shadow_views(scene, camera);
