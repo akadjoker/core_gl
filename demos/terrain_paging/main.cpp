@@ -102,7 +102,7 @@ int main(int argc, char** argv)
     fly.speed = 60.f;
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
-
+    float timeOfDay = getenv("COREGL_TOD") ? (float)atof(getenv("COREGL_TOD")) : 0.9f;
     PerfPrinter perf;
     int frame = 0;
     bool running = true, debugColors = false;
@@ -164,7 +164,15 @@ int main(int argc, char** argv)
                     if (smooth) terrain->smooth_height(hit.x, hit.z, 22.f, 1);
                 }
             }
+
+        if (keys[SDL_SCANCODE_T]) timeOfDay += dt * 0.4f;
+        if (keys[SDL_SCANCODE_G]) timeOfDay -= dt * 0.4f;
+        Vec3 sunDir = Vec3(cosf(timeOfDay) * 0.8f, sinf(timeOfDay), 0.35f).normalized();
+        renderer.set_light_dir(sunDir * -1.f);
         }
+
+
+        
         scene.update(dt);
         terrain->set_lod_camera(60.f, h); // drives the de Boer LOD formula
         renderer.render(scene, w, h);

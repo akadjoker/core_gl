@@ -221,6 +221,11 @@ u32 LensFlareNode::build(Camera3D& cam, const Vec3& sunDir)
 
     Vec2 sunNDC(clip.x / clip.w, clip.y / clip.w);
     float fade = computeFade(sunNDC);
+
+    // sun elevation: fade out as it nears the horizon, gone once below
+    // (sunDir points AT the sun, so .y is sin(elevation))
+    float elev = sunDir.y / 0.08f;
+    fade *= elev < 0.f ? 0.f : (elev > 1.f ? 1.f : elev);
     if (fade <= 0.f) return 0;
 
     buildGeometry(sunNDC, fade, cam.get_aspect());

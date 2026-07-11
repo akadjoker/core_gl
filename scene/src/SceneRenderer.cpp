@@ -662,10 +662,19 @@ void SceneRenderer::draw_paged_terrain(const RenderView& v, const Frustum& frust
         const int n = t->layer_count();
         m_terrainShader.SetInt("u_layerCount", n);
 
-        // per-node linear fog (end <= 0 disables in the shader)
+        // per-node linear fog (end <= 0 disables in the shader). The color
+        // follows the sun: full at day, warm-shifted near the horizon,
+        // near-black at night — fog that stays bright after sunset glows.
         if (t->fog_enabled())
         {
-            const Vec3& fc = t->fog_color();
+            const float sunElev = -m_lightDir.y; // sin(elevation) of the sun
+            float day = sunElev / 0.25f;
+            day = day < 0.03f ? 0.03f : (day > 1.f ? 1.f : day);
+            // low sun keeps red longest (same idea as the sky's sunset tint)
+            float warm = 1.f - day;
+            Vec3 fc = t->fog_color();
+            fc = Vec3(fc.x * day * (1.f + 0.35f * warm), fc.y * day * (1.f + 0.10f * warm),
+                      fc.z * day);
             m_terrainShader.SetVec3("u_fogColor", fc.x, fc.y, fc.z);
             m_terrainShader.SetVec2("u_fogRange", t->fog_start(), t->fog_end());
         }
