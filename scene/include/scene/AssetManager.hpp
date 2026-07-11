@@ -18,6 +18,10 @@ public:
     // Never returns null: a missing/corrupt file logs a warning and yields
     // the shared checkerboard fallback — the scene keeps rendering.
     gl::Texture* loadTexture(const char* name, const char* path, bool sRGB = false);
+    // skybox cubemap from 6 image files, order: +X -X +Y -Y +Z -Z
+    // (right, left, up, down, front, back). Faces must be square, same
+    // size; failure falls back to the checkerboard like loadTexture.
+    gl::Texture* loadCubemap(const char* name, const char* const paths[6]);
     // shared magenta/black checker (lazily built)
     gl::Texture* defaultTexture();
     // registers an empty texture owned by the manager — for procedurally

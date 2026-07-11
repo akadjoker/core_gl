@@ -39,7 +39,18 @@ int main(int argc, char** argv)
         return 1;
     }
     renderer.set_light_dir(Vec3(0.4f, -0.7f, 0.3f));
-    renderer.set_sky_enabled(true);
+    if (const char* sky = getenv("COREGL_SKY"); sky && sky[0] == 'b')
+    {
+        // cubemap skybox (Ogre-style); the sun light keeps working —
+        // lighting is driven by set_light_dir, not by the background
+        const char* faces[6] = {
+            "assets/cubemaps/skybox01_px.jpg", "assets/cubemaps/skybox01_nx.jpg",
+            "assets/cubemaps/skybox01_py.jpg", "assets/cubemaps/skybox01_ny.jpg",
+            "assets/cubemaps/skybox01_pz.jpg", "assets/cubemaps/skybox01_nz.jpg"};
+        renderer.set_skybox(assets::AssetManager::instance().loadCubemap("sky", faces));
+    }
+    else
+        renderer.set_sky_enabled(true); // procedural (default)
     renderer.enable_shadows();
     if (getenv("COREGL_STATS")) renderer.set_show_stats(true); // F9 toggles too
 

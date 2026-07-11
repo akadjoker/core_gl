@@ -789,6 +789,43 @@ void main()
 }
 )";
 
+// skybox: same fullscreen-triangle pass as the procedural sky, but the
+// per-pixel view direction samples a cubemap — no cube geometry needed
+static const char* kSkyboxFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform mat4 u_invViewProj;
+uniform vec3 u_cameraPos;
+uniform samplerCube u_sky;
+
+void main()
+{
+    vec2 ndc = v_uv * 2.0 - 1.0;
+    vec4 farPt = u_invViewProj * vec4(ndc, 1.0, 1.0);
+    vec3 dir = normalize(farPt.xyz / farPt.w - u_cameraPos);
+    OutColor = vec4(texture(u_sky, dir).rgb, 1.0);
+}
+)";
+
+// skydome: equirectangular panorama sampled by view direction (Ogre's
+// skydome without the dome mesh)
+static const char* kSkydomeFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform mat4 u_invViewProj;
+uniform vec3 u_cameraPos;
+uniform sampler2D u_sky;
+
+void main()
+{
+    vec2 ndc = v_uv * 2.0 - 1.0;
+    vec4 farPt = u_invViewProj * vec4(ndc, 1.0, 1.0);
+    vec3 dir = normalize(farPt.xyz / farPt.w - u_cameraPos);
+    vec2 uv = vec2(atan(dir.z, dir.x) * 0.15915494 + 0.5, 0.5 - asin(dir.y) * 0.31830989);
+    OutColor = vec4(texture(u_sky, uv).rgb, 1.0);
+}
+)";
+
 static const char* kSkyFS = R"(
 in vec2 v_uv;
 out vec4 OutColor;

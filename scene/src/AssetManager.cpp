@@ -108,6 +108,60 @@ gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool 
     return tex;
 }
 
+gl::Texture* AssetManager::loadCubemap(const char* name, const char* const paths[6])
+{
+    if (!name || !paths) return nullptr;
+
+    auto it = m_impl->textures.find(name);
+    if (it != m_impl->textures.end()) return it->second;
+
+    stbi_uc* faces[6] = {};
+    int size = 0;
+    bool ok = true;
+    for (int i = 0; i < 6 && ok; ++i)
+    {
+        scene::ByteArray data;
+        if (!fs::getFilesystem().readFile(paths[i], data))
+        {
+            gl::Log::Warn("AssetManager: cubemap '%s' face '%s' not found", name, paths[i]);
+            ok = false;
+            break;
+        }
+        int w = 0, h = 0, channels = 0;
+        faces[i] = stbi_load_from_memory(data.data(), (int)data.size(), &w, &h, &channels, 4);
+        data.destroy();
+        if (!faces[i] || w != h || (size && w != size))
+        {
+            gl::Log::Warn("AssetManager: cubemap '%s' face '%s' bad (%dx%d, need square, equal)",
+                          name, paths[i], w, h);
+            ok = false;
+            break;
+        }
+        size = w;
+    }
+
+    if (!ok)
+    {
+        for (int i = 0; i < 6; ++i)
+            if (faces[i]) stbi_image_free(faces[i]);
+        return defaultTexture();
+    }
+
+    const void* data6[6];
+    for (int i = 0; i < 6; ++i)
+        data6[i] = faces[i];
+    gl::Texture* tex = new gl::Texture();
+    tex->LoadCube(data6, size, gl::TextureFormat::RGBA8);
+    tex->SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+    tex->SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE,
+                 gl::TextureWrap::CLAMP_TO_EDGE);
+    for (int i = 0; i < 6; ++i)
+        stbi_image_free(faces[i]);
+
+    m_impl->textures[name] = tex;
+    return tex;
+}
+
 gl::Texture* AssetManager::defaultTexture()
 {
     if (m_impl->fallback) return m_impl->fallback;

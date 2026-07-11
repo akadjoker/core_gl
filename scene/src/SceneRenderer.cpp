@@ -182,6 +182,18 @@ bool SceneRenderer::init()
     m_debug.Bind();
     m_debug.SetInt("u_tex", 0);
 
+    if (!loadStage(m_skyboxShader, gl::PipelineStage::VERTEX, kSkyVS) ||
+        !loadStage(m_skyboxShader, gl::PipelineStage::FRAGMENT, kSkyboxFS) ||
+        !m_skyboxShader.Link())
+        return false;
+    m_skyboxShader.Bind();
+    m_skyboxShader.SetInt("u_sky", 0);
+    if (!loadStage(m_skydomeShader, gl::PipelineStage::VERTEX, kSkyVS) ||
+        !loadStage(m_skydomeShader, gl::PipelineStage::FRAGMENT, kSkydomeFS) ||
+        !m_skydomeShader.Link())
+        return false;
+    m_skydomeShader.Bind();
+    m_skydomeShader.SetInt("u_sky", 0);
     if (!loadStage(m_sky, gl::PipelineStage::VERTEX, kSkyVS) ||
         !loadStage(m_sky, gl::PipelineStage::FRAGMENT, kSkyFS) || !m_sky.Link())
         return false;
@@ -254,6 +266,8 @@ void SceneRenderer::release()
     m_water.Release();
     m_oceanShader.Release();
     m_sky.Release();
+    m_skyboxShader.Release();
+    m_skydomeShader.Release();
     m_particle.Release();
     m_grass.Release();
     m_terrainShader.Release();
@@ -927,20 +941,35 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     // and refraction included, clipped by the view's plane)
     if (!m_pagedTerrains.empty()) draw_paged_terrain(v, frustum);
 
-    if (m_sky_enabled)
+    if (m_sky_enabled || m_skybox || m_skydome)
     {
         // background: fills every pixel the opaque pass left at depth 1.0.
-        // The sky shader writes no clip distance, so the hardware plane
-        // must be off while it draws.
+        // The sky shaders write no clip distance, so the hardware plane
+        // must be off while they draw. Three kinds (Ogre-style), one pass:
+        // procedural gradient, cubemap skybox or equirect skydome — all
+        // sample by the per-pixel view direction, no geometry.
         gl::Renderer::SetClipDistance(0, false);
         gl::Renderer::SetDepthWrite(false);
         gl::Renderer::SetDepthFunction(gl::DepthFunction::LEQUAL);
         gl::Renderer::SetCull(gl::CullMode::NONE);
-        m_sky.Bind();
+
+        gl::Shader* sky = &m_sky;
+        if (m_skybox)
+        {
+            sky = &m_skyboxShader;
+            m_skybox->Bind(0);
+        }
+        else if (m_skydome)
+        {
+            sky = &m_skydomeShader;
+            m_skydome->Bind(0);
+        }
+        sky->Bind();
         Mat4 invViewProj = Mat4::Inverse(vp);
-        m_sky.SetMat4("u_invViewProj", invViewProj.x);
-        m_sky.SetVec3("u_cameraPos", v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
-        m_sky.SetVec3("u_sunDir", -m_lightDir.x, -m_lightDir.y, -m_lightDir.z);
+        sky->SetMat4("u_invViewProj", invViewProj.x);
+        sky->SetVec3("u_cameraPos", v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
+        if (sky == &m_sky)
+            sky->SetVec3("u_sunDir", -m_lightDir.x, -m_lightDir.y, -m_lightDir.z);
         gl::Renderer::DrawFullscreenTriangle();
         gl::Renderer::SetDepthFunction(gl::DepthFunction::LESS);
         gl::Renderer::SetDepthWrite(true);

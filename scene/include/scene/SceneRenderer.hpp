@@ -44,10 +44,28 @@ public:
     void set_clear_color(float r, float g, float b);
     void set_light_dir(const Vec3& dir); // direction the light travels
 
-    // procedural sky: gradient + sun disc derived from the light direction.
-    // Animate set_light_dir over time and dawn/day/dusk/night follow; the
-    // sky is drawn in every view, so water reflections show it too.
-    void set_sky_enabled(bool on) { m_sky_enabled = on; }
+    // ── sky (Ogre-style: three kinds, all drawn in every view so water
+    // reflections show them too). Lighting is independent: set_light_dir
+    // keeps driving sun light/shadows/fog whatever the background is.
+    // procedural: gradient + sun disc derived from the light direction —
+    // animate set_light_dir and dawn/day/dusk/night follow
+    void set_sky_enabled(bool on)
+    {
+        m_sky_enabled = on;
+        if (on) m_skybox = nullptr, m_skydome = nullptr;
+    }
+    // skybox: 6-face cubemap sampled by view direction (null disables)
+    void set_skybox(gl::Texture* cubemap)
+    {
+        m_skybox = cubemap;
+        if (cubemap) m_sky_enabled = false, m_skydome = nullptr;
+    }
+    // skydome: equirectangular panorama texture (null disables)
+    void set_skydome(gl::Texture* panorama)
+    {
+        m_skydome = panorama;
+        if (panorama) m_sky_enabled = false, m_skybox = nullptr;
+    }
 
     // ── post-processing ──
     // The main view renders into an HDR target; a filmic tonemap brings it
@@ -210,9 +228,13 @@ private:
     std::vector<RibbonTrailNode*> m_ribbonTrails;       // reused across frames
     std::vector<TerrainPagingNode*> m_pagedTerrains;    // reused across frames
 
-    // procedural sky pass
+    // sky passes: procedural gradient, cubemap skybox, equirect skydome
     gl::Shader m_sky;
+    gl::Shader m_skyboxShader;
+    gl::Shader m_skydomeShader;
     bool m_sky_enabled = false;
+    gl::Texture* m_skybox = nullptr;  // not owned
+    gl::Texture* m_skydome = nullptr; // not owned
 
     // post chain: HDR scene target -> (godrays) -> tonemap -> screen
     bool ensure_post_targets(int w, int h);
