@@ -16,6 +16,7 @@ add_library(scene STATIC
     src/SkinnedMesh.cpp
     src/SkinnedMeshInstance.cpp
     src/BoneAttachment.cpp
+    src/MeshPrimitives.cpp
     src/Camera3D.cpp
     src/Scene.cpp
     src/SceneRenderer.cpp

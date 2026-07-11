@@ -4,6 +4,9 @@
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
 
+class Mesh;
+class SkinnedMesh;
+
 namespace assets
 {
 
@@ -36,10 +39,40 @@ public:
     gl::Shader* getShader(const char* name);
     void unloadShader(const char* name);
 
+    // ── meshes (the manager is the single owner of geometry memory) ──
+    // create empty (fill + upload yourself), load .h3d, or make primitives;
+    // all are uploaded on creation except createMesh. Name collisions
+    // return the existing mesh, like textures.
+    Mesh* createMesh(const char* name);
+    Mesh* loadMesh(const char* name, const char* path);
+    Mesh* getMesh(const char* name);
+    Mesh* createCube(const char* name, float sx, float sy, float sz);
+    Mesh* createPlane(const char* name, float width, float depth, float uvTiles = 1.f,
+                     int segX = 1, int segZ = 1);
+    Mesh* createSphere(const char* name, float radius, int rings = 16, int slices = 24);
+    Mesh* createCylinder(const char* name, float radius, float height, int slices = 24);
+    Mesh* createCone(const char* name, float radius, float height, int slices = 24);
+    Mesh* createCapsule(const char* name, float radius, float height, int rings = 8,
+                        int slices = 24);
+    Mesh* createHillsPlane(const char* name, float width, float depth, int segX, int segZ,
+                           float (*heightFn)(float x, float z), float uvTiles = 1.f);
+    // brute-force single-mesh terrain from a heightmap array (see
+    // primitives::heightfield — small patches/previews )
+    Mesh* createHeightfield(const char* name, const float* heights, int w, int h,
+                           float cellSize, float uvTiles = 1.f);
+
+    // ── skinned meshes + their animation clips ──
+    // loadSkinnedMesh loads the .h3d (SKEL/SKIN); loadAnimation appends one
+    // .anim clip to a skinned mesh previously loaded under `name`.
+    SkinnedMesh* loadSkinnedMesh(const char* name, const char* meshPath);
+    SkinnedMesh* getSkinnedMesh(const char* name);
+    bool loadAnimation(const char* name, const char* animPath);
+
     void clear();
 
     gl::u32 textureCount() const;
     gl::u32 shaderCount() const;
+    gl::u32 meshCount() const;
 
 private:
     AssetManager();

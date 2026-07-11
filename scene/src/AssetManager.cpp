@@ -7,6 +7,10 @@
 // stb_image implementation lives in stb_impl.cpp
 #include "stb_image.h"
 
+#include "scene/Mesh.hpp"
+#include "scene/MeshLoader.hpp"
+#include "scene/MeshPrimitives.hpp"
+#include "scene/SkinnedMesh.hpp"
 #include <unordered_map>
 #include <string>
 
@@ -17,6 +21,8 @@ struct AssetManager::Impl
 {
     std::unordered_map<std::string, gl::Texture*> textures;
     std::unordered_map<std::string, gl::Shader*> shaders;
+    std::unordered_map<std::string, Mesh*> meshes;
+    std::unordered_map<std::string, SkinnedMesh*> skinned;
     gl::Texture* fallback = nullptr; // checkerboard, owned via `textures`
 };
 
@@ -66,6 +72,144 @@ void AssetManager::clear()
         }
     }
     m_impl->shaders.clear();
+
+    for (auto& pair : m_impl->meshes)
+    {
+        if (pair.second)
+        {
+            pair.second->release_gpu();
+            delete pair.second;
+        }
+    }
+    m_impl->meshes.clear();
+
+    for (auto& pair : m_impl->skinned)
+    {
+        if (pair.second)
+        {
+            pair.second->release_gpu();
+            delete pair.second;
+        }
+    }
+    m_impl->skinned.clear();
+}
+
+// ── meshes: the manager owns them; games hold pointers only ──
+
+Mesh* AssetManager::createMesh(const char* name)
+{
+    if (!name) return nullptr;
+    auto it = m_impl->meshes.find(name);
+    if (it != m_impl->meshes.end()) return it->second;
+    Mesh* m = new Mesh();
+    m_impl->meshes[name] = m;
+    return m;
+}
+
+Mesh* AssetManager::loadMesh(const char* name, const char* path)
+{
+    if (!name || !path) return nullptr;
+    auto it = m_impl->meshes.find(name);
+    if (it != m_impl->meshes.end()) return it->second;
+    Mesh* m = new Mesh();
+    if (!MeshLoader::load(path, *m))
+    {
+        delete m;
+        return nullptr; // loader already logged; caller decides the fallback
+    }
+    m->upload();
+    m_impl->meshes[name] = m;
+    return m;
+}
+
+Mesh* AssetManager::getMesh(const char* name)
+{
+    auto it = m_impl->meshes.find(name);
+    return it != m_impl->meshes.end() ? it->second : nullptr;
+}
+
+// primitives arrive uploaded and ready to draw
+#define PRIMITIVE_BODY(call)                                                                     \
+    if (!name) return nullptr;                                                                   \
+    auto it = m_impl->meshes.find(name);                                                         \
+    if (it != m_impl->meshes.end()) return it->second;                                           \
+    Mesh* m = new Mesh();                                                                        \
+    call;                                                                                        \
+    m->upload();                                                                                 \
+    m_impl->meshes[name] = m;                                                                    \
+    return m
+
+Mesh* AssetManager::createCube(const char* name, float sx, float sy, float sz)
+{
+    PRIMITIVE_BODY(primitives::cube(*m, sx, sy, sz));
+}
+
+Mesh* AssetManager::createPlane(const char* name, float width, float depth, float uvTiles,
+                                int segX, int segZ)
+{
+    PRIMITIVE_BODY(primitives::plane(*m, width, depth, uvTiles, segX, segZ));
+}
+
+Mesh* AssetManager::createSphere(const char* name, float radius, int rings, int slices)
+{
+    PRIMITIVE_BODY(primitives::sphere(*m, radius, rings, slices));
+}
+
+Mesh* AssetManager::createCylinder(const char* name, float radius, float height, int slices)
+{
+    PRIMITIVE_BODY(primitives::cylinder(*m, radius, height, slices));
+}
+
+Mesh* AssetManager::createCone(const char* name, float radius, float height, int slices)
+{
+    PRIMITIVE_BODY(primitives::cone(*m, radius, height, slices));
+}
+
+Mesh* AssetManager::createCapsule(const char* name, float radius, float height, int rings,
+                                  int slices)
+{
+    PRIMITIVE_BODY(primitives::capsule(*m, radius, height, rings, slices));
+}
+
+Mesh* AssetManager::createHillsPlane(const char* name, float width, float depth, int segX,
+                                     int segZ, float (*heightFn)(float x, float z),
+                                     float uvTiles)
+{
+    PRIMITIVE_BODY(primitives::hills_plane(*m, width, depth, segX, segZ, heightFn, uvTiles));
+}
+
+Mesh* AssetManager::createHeightfield(const char* name, const float* heights, int w, int h,
+                                      float cellSize, float uvTiles)
+{
+    PRIMITIVE_BODY(primitives::heightfield(*m, heights, w, h, cellSize, uvTiles));
+}
+#undef PRIMITIVE_BODY
+
+SkinnedMesh* AssetManager::loadSkinnedMesh(const char* name, const char* meshPath)
+{
+    if (!name || !meshPath) return nullptr;
+    auto it = m_impl->skinned.find(name);
+    if (it != m_impl->skinned.end()) return it->second;
+    SkinnedMesh* m = new SkinnedMesh();
+    if (!m->load(meshPath))
+    {
+        delete m;
+        return nullptr;
+    }
+    m_impl->skinned[name] = m;
+    return m;
+}
+
+SkinnedMesh* AssetManager::getSkinnedMesh(const char* name)
+{
+    auto it = m_impl->skinned.find(name);
+    return it != m_impl->skinned.end() ? it->second : nullptr;
+}
+
+bool AssetManager::loadAnimation(const char* name, const char* animPath)
+{
+    SkinnedMesh* m = getSkinnedMesh(name);
+    return m ? m->load_animations(animPath) : false;
 }
 
 gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool sRGB)
@@ -304,5 +448,7 @@ gl::u32 AssetManager::shaderCount() const
 {
     return (gl::u32)m_impl->shaders.size();
 }
+
+gl::u32 AssetManager::meshCount() const { return (gl::u32)m_impl->meshes.size(); }
 
 } // namespace assets
