@@ -36,7 +36,6 @@ int main(int argc, char** argv)
     }
     renderer.set_light_dir(Vec3(0.4f, -0.8f, 0.3f));
     renderer.set_sky_enabled(true);
-    renderer.enable_shadows();
     if (getenv("COREGL_STATS")) renderer.set_show_stats(true);
     if (getenv("COREGL_CASCADES")) renderer.set_show_cascades(true);
     if (getenv("COREGL_GIZMOS")) renderer.set_show_light_gizmos(true);
@@ -76,6 +75,14 @@ int main(int argc, char** argv)
     const float extent = std::max(size.x, std::max(size.y, size.z));
     printf("powerplant bounds: min(%.1f %.1f %.1f) max(%.1f %.1f %.1f) extent=%.1f\n", bmin.x,
            bmin.y, bmin.z, bmax.x, bmax.y, bmax.z, extent);
+
+    // shadow distance/resolution tuned to the scene's own scale. Distance
+    // must cover the whole extent (the 200 default clipped casters near the
+    // edge of this ~245-unit scene, popping their shadows in/out); bumping
+    // resolution to 4096 keeps roughly the same texels-per-world-unit
+    // density Sponza had at 2048/200, so edges don't get blockier just
+    // because the covered distance grew.
+    renderer.enable_shadows(4, 4096, extent * 1.3f);
 
     std::vector<Material*> materials;
     materials.reserve(matDescs.size());
@@ -131,7 +138,7 @@ int main(int argc, char** argv)
     headlamp->color = Vec3(1.f, 1.f, 0.95f);
     headlamp->intensity = 1.5f;
     headlamp->range = extent * 0.35f;
-    headlamp->cast_shadows = false; // 3 static lights already spend the shadow-caster budget
+    headlamp->cast_shadows = true; // 3 static lights already spend the shadow-caster budget
 
     scene.set_active_camera(camera);
     scene.ready();
