@@ -84,6 +84,14 @@ public:
     // means sharper shadows for the same resolution.
     bool enable_shadows(int cascades = 4, int resolution = 2048, float distance = 200.f);
     void set_show_cascades(bool on) { m_show_cascades = on; } // debug tint
+    // debug: fully disable/re-enable shadow sampling in the forward shader
+    // without tearing down the shadow map (toggle at runtime, no realloc)
+    void set_shadows_active(bool on) { m_shadows_active = on; }
+    // debug: wireframe sphere at every LightNode (radius = range for point/
+    // spot; a fixed small radius for directional-only scenes with none) so
+    // you can see where a light actually sits instead of guessing from the
+    // lit result. Drawn last, on top, in every view.
+    void set_show_light_gizmos(bool on) { m_show_light_gizmos = on; }
 
     // one full frame: extra views (water reflection/refraction), then the
     // main view from the scene's active camera. viewport_w/h set the camera
@@ -108,6 +116,7 @@ public:
 
 private:
     void draw_stats(int viewport_w, int viewport_h);
+    void draw_light_gizmos(const Mat4& viewProj);
     // one rendering of the scene into one target
     struct RenderView
     {
@@ -180,6 +189,7 @@ private:
     float m_splits[5] = {};
     Mat4 m_cascadeMat[4];
     bool m_show_cascades = false;
+    bool m_shadows_active = true;
     std::vector<RenderItem> m_shadow_items; // reused across frames
 
     // local lights (point/spot): depth pass writing linear distance
@@ -287,6 +297,9 @@ private:
     gl::RenderStats m_frameStats;
     gl::Batch m_statsBatch; // lazy-init 2D batch for the stats panel
     bool m_statsBatchReady = false;
+    gl::Batch m_gizmoBatch; // lazy-init 3D batch for light gizmos
+    bool m_gizmoBatchReady = false;
+    bool m_show_light_gizmos = false;
     bool m_show_stats = false;
     gl::u64 m_lastFrameNs = 0; // render()-to-render() clock for the fps line
     float m_smoothMs = 0.f;    // exponentially smoothed frame time

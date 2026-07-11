@@ -24,78 +24,89 @@
 
 // ── CSM cascade fitting ──────────────────────────────────────────────────
 
-// split distances: log/uniform blend (finer slices near the camera)
+// split distances: log/uniform blend (finer slices near the camera).
+// Ported verbatim from the user's old engine (tmp/core/src/ShadowCascades.cpp),
+// lambda=0.5 fixed (was a runtime knob there; no caller ever changed it).
 static void csmSplits(float nearClip, float farClip, float* splits, int numCascades)
 {
-    float logBase = logf(farClip / nearClip) / (float)numCascades;
-    float uniformStep = 1.0f / (float)numCascades;
+    const float lambda = 0.5f;
     splits[0] = nearClip;
     for (int i = 1; i <= numCascades; ++i)
     {
-        float logSplit = nearClip * expf(logBase * (float)i);
-        float unifSplit = nearClip + uniformStep * (float)i * (farClip - nearClip);
-        float blend = (float)i / (float)numCascades;
-        splits[i] = logSplit + (unifSplit - logSplit) * (blend * 0.5f);
+        float p = (float)i / (float)numCascades;
+        float logS = nearClip * powf(farClip / nearClip, p);
+        float uniS = nearClip + (farClip - nearClip) * p;
+        splits[i] = lambda * logS + (1.0f - lambda) * uniS;
     }
 }
 
-// one cascade's lightProjection * lightView:
-// 1. unproject this slice's 8 frustum corners to world space
-// 2. light view looks at their center along the sun direction
-// 3. tight light-space AABB, Z range extended so casters outside the slice
-//    (toward the sun, or just behind the camera) still land in the map
-// 4. AABB snapped to shadow-texel steps: the ortho window moves in whole
-//    texels as the camera moves, so shadow edges don't shimmer
+// One cascade's lightProjection * lightView. Ported verbatim from the
+// user's old engine (ShadowCascades::update) — this Sponza scene is what it
+// was proven against; do not re-derive this math.
+// 1. this slice's 8 frustum corners, straight from tan(fov/2) + camera
+//    world transform (no projection-matrix inverse needed)
+// 2. bounding SPHERE around them: the radius depends only on the slice's
+//    shape (fov/aspect/near/far), never on camera orientation, so it's
+//    identical every frame — quantized to 1/16 for extra float stability
+// 3. light eye placed a full RADIUS back from the center (not a unit
+//    lightDir step) — this is what makes the Z fit below well-behaved
+// 4. Z range from the real corners in light space, padded for casters
+//    outside the slice
+// 5. texel-snap by nudging the ortho's translation so world-space origin
+//    (a fixed reference point, not the moving center) lands on a texel
 static Mat4 csmCascadeMatrix(int cascade, float aspect, float fovDeg, const Mat4& view,
                              const float* splits, const Vec3& lightDir, float shadowMapSize)
 {
-    Mat4 projection = Mat4::Perspective((double)fovDeg, (double)aspect, (double)splits[cascade],
-                                        (double)splits[cascade + 1]);
-    Mat4 invViewProj = Mat4::Inverse(projection * view);
+    const float zn = splits[cascade], zf = splits[cascade + 1];
+    const Mat4 invView = Mat4::Inverse(view); // camera -> world
+    const float tanV = tanf(fovDeg * 0.5f * 3.14159265f / 180.f);
+    const float tanH = tanV * aspect;
+    const Vec3 L = lightDir.normalized();
+    const Vec3 up = (fabsf(L.y) > 0.99f) ? Vec3(0.f, 0.f, 1.f) : Vec3(0.f, 1.f, 0.f);
 
-    Vec4 corners[8] = {
-        Vec4(-1.f, -1.f, -1.f, 1.f), Vec4(-1.f, -1.f, 1.f, 1.f), Vec4(-1.f, 1.f, -1.f, 1.f),
-        Vec4(-1.f, 1.f, 1.f, 1.f),   Vec4(1.f, -1.f, -1.f, 1.f), Vec4(1.f, -1.f, 1.f, 1.f),
-        Vec4(1.f, 1.f, -1.f, 1.f),   Vec4(1.f, 1.f, 1.f, 1.f),
-    };
-    for (int i = 0; i < 8; ++i)
+    Vec3 corners[8];
+    int k = 0;
+    for (int fi = 0; fi < 2; ++fi)
     {
-        Vec4 world = invViewProj * corners[i];
-        if (fabsf(world.w) > 1e-6f) corners[i] = world / world.w;
+        float z = (fi == 0) ? zn : zf;
+        float x = z * tanH, y = z * tanV;
+        Vec3 vs[4] = {Vec3(-x, -y, -z), Vec3(x, -y, -z), Vec3(x, y, -z), Vec3(-x, y, -z)};
+        for (int j = 0; j < 4; ++j)
+            corners[k++] = invView * vs[j];
     }
 
     Vec3 center(0.f, 0.f, 0.f);
-    for (int i = 0; i < 8; ++i)
-        center += Vec3(corners[i].x, corners[i].y, corners[i].z);
+    for (int j = 0; j < 8; ++j)
+        center += corners[j];
     center *= (1.0f / 8.0f);
+    float r = 0.f;
+    for (int j = 0; j < 8; ++j)
+        r = std::max(r, (corners[j] - center).length());
+    r = ceilf(r * 16.0f) / 16.0f; // quantize for extra stability
 
-    // tilted up vector avoids a singular basis when the sun is vertical
-    Vec3 eye = center - lightDir;
-    Mat4 lightView = Mat4::LookAt(eye, center, Vec3(0.001f, 1.f, 0.001f));
+    Mat4 lightView = Mat4::LookAt(center - L * r, center, up);
 
-    Vec3 minV(1e30f, 1e30f, 1e30f);
-    Vec3 maxV(-1e30f, -1e30f, -1e30f);
-    for (int i = 0; i < 8; ++i)
+    float zmin = 1e30f, zmax = -1e30f;
+    for (int j = 0; j < 8; ++j)
     {
-        Vec3 t = lightView * Vec3(corners[i].x, corners[i].y, corners[i].z);
-        minV = minV.Min(t);
-        maxV = maxV.Max(t);
+        float z = (lightView * corners[j]).z;
+        zmin = std::min(zmin, z);
+        zmax = std::max(zmax, z);
     }
+    float zpad = (zmax - zmin) * 0.5f + 5.0f;
 
-    const float depthScale = 5.0f;
-    minV.z *= (minV.z < 0.f) ? depthScale : (1.0f / depthScale);
-    maxV.z *= (maxV.z > 0.f) ? depthScale : (1.0f / depthScale);
+    Mat4 lightProj = Mat4::Ortho(-r, r, -r, r, -zmax - zpad, -zmin);
 
-    float texelX = (maxV.x - minV.x) / shadowMapSize;
-    float texelY = (maxV.y - minV.y) / shadowMapSize;
-    if (texelX < 1e-6f) texelX = 1e-6f;
-    if (texelY < 1e-6f) texelY = 1e-6f;
-    minV.x = floorf(minV.x / texelX) * texelX;
-    minV.y = floorf(minV.y / texelY) * texelY;
-    maxV.x = floorf(maxV.x / texelX) * texelX;
-    maxV.y = floorf(maxV.y / texelY) * texelY;
+    // snap against world-space origin's projected position, not the
+    // cascade center — a fixed reference point makes the snap itself
+    // stable regardless of how the center moves frame to frame
+    Mat4 sm = lightProj * lightView;
+    Vec3 origin = sm * Vec3(0.f, 0.f, 0.f);
+    float half = shadowMapSize * 0.5f;
+    float ox = origin.x * half, oy = origin.y * half;
+    lightProj.c[3][0] += (roundf(ox) - ox) / half;
+    lightProj.c[3][1] += (roundf(oy) - oy) / half;
 
-    Mat4 lightProj = Mat4::Ortho(minV.x, maxV.x, minV.y, maxV.y, -maxV.z, -minV.z);
     return lightProj * lightView;
 }
 
@@ -1046,8 +1057,8 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
 
     set_light_uniforms();
 
-    m_forward.SetInt(m_locCascadeCount, m_cascades);
-    if (m_cascades > 0)
+    m_forward.SetInt(m_locCascadeCount, m_shadows_active ? m_cascades : 0);
+    if (m_shadows_active && m_cascades > 0)
     {
         m_shadowTex.Bind(1);
         m_forward.SetInt(m_locShowCascades, m_show_cascades ? 1 : 0);
@@ -1368,6 +1379,8 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
 
     if (m_debug_views) draw_debug_views(viewport_w, viewport_h);
 
+    if (m_show_light_gizmos) draw_light_gizmos(proj * view);
+
     // snapshot BEFORE the stats panel draws, so the panel reports the
     // scene's cost, not its own
     m_frameStats = gl::Renderer::GetStats();
@@ -1434,6 +1447,48 @@ void SceneRenderer::draw_stats(int viewport_w, int viewport_h)
 
     gl::Renderer::SetBlend(false);
     gl::Renderer::SetDepthTest(true);
+}
+
+// wireframe sphere at every light's world position (radius = range for
+// point/spot; a fixed small marker for anything else) — see where a light
+// actually sits instead of guessing from the lit result on surfaces
+void SceneRenderer::draw_light_gizmos(const Mat4& viewProj)
+{
+    if (m_lights.empty()) return;
+    if (!m_gizmoBatchReady)
+    {
+        if (!m_gizmoBatch.Init()) return;
+        m_gizmoBatchReady = true;
+    }
+
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(false);
+
+    m_gizmoBatch.SetProjection(viewProj.x);
+    m_gizmoBatch.LoadIdentity();
+    m_gizmoBatch.SetMode(gl::RenderPrimitive::LINES);
+
+    for (LightNode* light : m_lights)
+    {
+        Vec3 p = light->get_global_position();
+        float range = 0.4f;
+        if (PointLight* pt = light->as<PointLight>())
+            range = pt->range;
+        else if (SpotLight* sp = light->as<SpotLight>())
+            range = sp->range;
+
+        gl::u8 r = (gl::u8)(light->color.x * 255.f), g = (gl::u8)(light->color.y * 255.f),
+               b = (gl::u8)(light->color.z * 255.f);
+        m_gizmoBatch.SetColor(r, g, b, 255);
+        m_gizmoBatch.SphereWire(p.x, p.y, p.z, range * 0.05f); // small marker at the light itself
+        m_gizmoBatch.SetColor(r, g, b, 90);
+        m_gizmoBatch.SphereWire(p.x, p.y, p.z, range); // full range, dim
+    }
+
+    m_gizmoBatch.Render();
+    gl::Renderer::SetDepthWrite(true);
 }
 
 void SceneRenderer::draw_debug_views(int viewport_w, int viewport_h)

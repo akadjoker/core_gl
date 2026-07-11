@@ -62,6 +62,13 @@ public:
     bool readBytes(gl::u8* dst, gl::u32 count);
     bool readString(char* out, gl::u32 maxSize);
 
+    // bulk reads for large arrays (mesh loading): one bounds check + one
+    // memcpy for the whole array, instead of a function call and a bounds
+    // check per element — the difference between milliseconds and seconds
+    // once a mesh has hundreds of thousands of verts/indices.
+    bool readF32Array(gl::f32* dst, gl::u32 count);
+    bool readU32Array(gl::u32* dst, gl::u32 count);
+
     gl::u8 peekU8() const;
 
     bool seek(gl::u32 pos);

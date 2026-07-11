@@ -77,29 +77,39 @@ static bool parseBuffer(scene::ByteArray& in, u32 chunkEnd, std::vector<MeshVert
         {
             u32 n = 0;
             if (!in.readU32(n)) return false;
-            verts.reserve(verts.size() + n);
+
+            // one bulk read for all n*8 floats (pos3+normal3+uv2), instead
+            // of 8 separate ByteArray calls per vertex — the file layout
+            // isn't the MeshVertex layout (no tangent, packed differently),
+            // so we unpack after, but the read itself is a single memcpy
+            std::vector<float> raw((size_t)n * 8);
+            if (!in.readF32Array(raw.data(), n * 8)) return false;
+
+            const size_t base = verts.size();
+            verts.resize(base + n);
             for (u32 i = 0; i < n; ++i)
             {
-                MeshVertex v;
-                if (!readVec3(in, v.position) || !readVec3(in, v.normal)) return false;
-                if (!in.readF32(v.uv.x) || !in.readF32(v.uv.y)) return false;
+                const float* r = &raw[(size_t)i * 8];
+                MeshVertex& v = verts[base + i];
+                v.position = Vec3(r[0], r[1], r[2]);
+                v.normal = Vec3(r[3], r[4], r[5]);
                 v.tangent = Vec4(1.f, 0.f, 0.f, 1.f); // recomputed after load
+                v.uv = Vec2(r[6], r[7]);
                 mn = mn.Min(v.position);
                 mx = mx.Max(v.position);
-                verts.push_back(v);
             }
         }
         else if (id == kChunkIdxs)
         {
             u32 n = 0;
             if (!in.readU32(n)) return false;
-            indices.reserve(indices.size() + n);
-            for (u32 i = 0; i < n; ++i)
-            {
-                u32 idx = 0;
-                if (!in.readU32(idx)) return false;
-                indices.push_back(baseVertex + idx);
-            }
+
+            const size_t base = indices.size();
+            indices.resize(base + n);
+            if (!in.readU32Array(indices.data() + base, n)) return false;
+            if (baseVertex != 0)
+                for (u32 i = 0; i < n; ++i)
+                    indices[base + i] += baseVertex;
         }
         else
         {

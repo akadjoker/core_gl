@@ -62,44 +62,51 @@ static bool parseBuffer(scene::ByteArray& in, gl::u32 chunkEnd, std::vector<Mesh
         {
             gl::u32 n = 0;
             if (!in.readU32(n)) return false;
-            verts.reserve(verts.size() + n);
+
+            // one bulk read for all n*8 floats instead of 8 ByteArray calls
+            // per vertex (see MeshLoader.cpp — same fix, same reason)
+            std::vector<float> raw((size_t)n * 8);
+            if (!in.readF32Array(raw.data(), n * 8)) return false;
+
+            const size_t base = verts.size();
+            verts.resize(base + n);
             for (gl::u32 i = 0; i < n; ++i)
             {
-                MeshVertex v;
-                if (!readVec3(in, v.position) || !readVec3(in, v.normal)) return false;
-                if (!in.readF32(v.uv.x) || !in.readF32(v.uv.y)) return false;
+                const float* r = &raw[(size_t)i * 8];
+                MeshVertex& v = verts[base + i];
+                v.position = Vec3(r[0], r[1], r[2]);
+                v.normal = Vec3(r[3], r[4], r[5]);
                 v.tangent = Vec4(1.f, 0.f, 0.f, 1.f);
+                v.uv = Vec2(r[6], r[7]);
                 mn = mn.Min(v.position);
                 mx = mx.Max(v.position);
-                verts.push_back(v);
             }
         }
         else if (id == kChunkIdxs)
         {
             gl::u32 n = 0;
             if (!in.readU32(n)) return false;
-            indices.reserve(indices.size() + n);
-            for (gl::u32 i = 0; i < n; ++i)
-            {
-                gl::u32 idx = 0;
-                if (!in.readU32(idx)) return false;
-                indices.push_back(baseVertex + idx);
-            }
+
+            const size_t base = indices.size();
+            indices.resize(base + n);
+            if (!in.readU32Array(indices.data() + base, n)) return false;
+            if (baseVertex != 0)
+                for (gl::u32 i = 0; i < n; ++i)
+                    indices[base + i] += baseVertex;
         }
         else if (id == kChunkSkin)
         {
             gl::u32 n = 0;
             if (!in.readU32(n)) return false;
-            weights.reserve(weights.size() + n);
-            for (gl::u32 i = 0; i < n; ++i)
-            {
-                SkinnedMesh::VertexWeights w;
-                for (int j = 0; j < 4; ++j)
-                    if (!in.readU8(w.bone[j])) return false;
-                for (int j = 0; j < 4; ++j)
-                    if (!in.readF32(w.weight[j])) return false;
-                weights.push_back(w);
-            }
+
+            // VertexWeights (4x u8 + 4x f32 = 20 bytes) matches the file
+            // layout exactly with no padding — one bulk read for the lot
+            static_assert(sizeof(SkinnedMesh::VertexWeights) == 20,
+                         "VertexWeights must match the file's packed layout");
+            const size_t base = weights.size();
+            weights.resize(base + n);
+            if (!in.readBytes(reinterpret_cast<gl::u8*>(weights.data() + base), n * 20))
+                return false;
         }
         else
             in.setCursor(subEnd);

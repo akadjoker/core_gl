@@ -1,4 +1,5 @@
 #include "scene/ByteArray.hpp"
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
 
@@ -274,6 +275,39 @@ bool ByteArray::readF32(gl::f32& out)
     gl::u32 bits;
     if (!readU32(bits)) return false;
     std::memcpy(&out, &bits, sizeof(out));
+    return true;
+}
+
+// one bounds check, one memcpy for the whole array; endian swap (rare —
+// the exporter always writes little-endian) is a single pass afterward
+bool ByteArray::readF32Array(gl::f32* dst, gl::u32 count)
+{
+    static_assert(sizeof(gl::f32) == 4, "readF32Array assumes 4-byte float");
+    if (!readBytes(reinterpret_cast<gl::u8*>(dst), count * 4)) return false;
+    if (m_bigEndian)
+    {
+        for (gl::u32 i = 0; i < count; ++i)
+        {
+            gl::u8* b = reinterpret_cast<gl::u8*>(&dst[i]);
+            std::swap(b[0], b[3]);
+            std::swap(b[1], b[2]);
+        }
+    }
+    return true;
+}
+
+bool ByteArray::readU32Array(gl::u32* dst, gl::u32 count)
+{
+    if (!readBytes(reinterpret_cast<gl::u8*>(dst), count * 4)) return false;
+    if (m_bigEndian)
+    {
+        for (gl::u32 i = 0; i < count; ++i)
+        {
+            gl::u8* b = reinterpret_cast<gl::u8*>(&dst[i]);
+            std::swap(b[0], b[3]);
+            std::swap(b[1], b[2]);
+        }
+    }
     return true;
 }
 
