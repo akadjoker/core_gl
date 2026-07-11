@@ -179,6 +179,11 @@ int main(int argc, char** argv)
         lastTicks = now;
         if (dt > 0.1f) dt = 0.1f;
 
+        // automated one-shot check: draw swords at frame 30, watch the
+        // blend back into IdleTop (no keyboard)
+        if (getenv("COREGL_ONESHOT") && frame == 30)
+            sinbad[1]->animation().layer(1).play_one_shot("DrawSwords", "IdleTop", 0.2f);
+
         fly.apply(camera, dt);
         scene.update(dt);
 

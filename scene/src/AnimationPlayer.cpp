@@ -9,6 +9,7 @@ void AnimationLayer::play(const std::string& clip, PlayMode mode, float blendTim
     if (m_currentName == clip && m_mode == mode) return;
     m_previous = m_current;
     m_prevTime = m_time;
+    m_prevMode = m_mode;
     m_current = nullptr; // player resolves by name on next update
     m_currentName = clip;
     m_returnTo.clear();
@@ -187,8 +188,11 @@ void AnimationPlayer::update(float dt, LocalPose* out)
         {
             // crossfade: previous at full weight first, current on top by
             // blend factor — net effect lerp(previous, current, blend)
+            // the outgoing clip advances under its OWN mode — a finished
+            // one-shot must clamp at its last frame, not loop back to the
+            // start mid-fade (that read as a bounce)
             L.m_prevTime += dt * L.m_speed;
-            const float tPrev = wrapTime(L.m_prevTime, L.m_previous->duration(), PlayMode::Loop);
+            const float tPrev = wrapTime(L.m_prevTime, L.m_previous->duration(), L.m_prevMode);
             applyClip(L.m_previous, tPrev, 1.f, L.m_mask, out, m_scratch.data(), n);
             applyClip(L.m_current, tCur, L.m_blend, L.m_mask, out, m_scratch.data(), n);
         }

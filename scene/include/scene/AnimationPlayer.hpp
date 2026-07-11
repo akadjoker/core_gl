@@ -54,6 +54,7 @@ private:
     float m_blend = 1.f, m_blendDur = 0.f; // 0..1 previous->current
     float m_speed = 1.f;
     PlayMode m_mode = PlayMode::Loop;
+    PlayMode m_prevMode = PlayMode::Loop; // fading-out clip keeps ITS mode
     std::vector<float> m_mask; // empty = whole body
 };
 
