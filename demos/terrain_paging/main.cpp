@@ -29,7 +29,7 @@ int main(int argc, char** argv)
 
     DemoApp app;
     if (!app.Create("coregl - terrain paging")) return 1;
-    printf("controls: WASD/QE + mouse | LSHIFT fast | C colors | R raise/F dig | F9 stats | F10 gif\n");
+    printf("controls: WASD/QE + mouse | LSHIFT fast | C colors | R raise/F dig/T smooth (mouse) | F9 stats | F10 gif\n");
 
     SceneRenderer renderer;
     if (!renderer.init())
@@ -129,32 +129,31 @@ int main(int argc, char** argv)
         fly.apply(camera, dt);
         terrain->set_camera_position(camera->get_position());
 
-        // terrain editing: hold R to raise / F to dig at the point the
-        // camera looks at (ray-marched against the edited heightfield)
+        int w, h;
+        app.DrawableSize(&w, &h);
+
+        // terrain editing under the mouse cursor: hold R to raise, F to
+        // dig, T to smooth (mouse ray -> heightfield pick)
         {
             const Uint8* keys = SDL_GetKeyboardState(nullptr);
             float dir = keys[SDL_SCANCODE_R] ? 1.f : (keys[SDL_SCANCODE_F] ? -1.f : 0.f);
+            bool smooth = keys[SDL_SCANCODE_T];
             // automated check: raise for 60 frames, then dig 60 (no keyboard)
             if (getenv("COREGL_EDIT_TEST") && frame < 120) dir = frame < 60 ? 1.f : -0.5f;
-            if (dir != 0.f)
+            if (dir != 0.f || smooth)
             {
-                Vec3 o = camera->get_position();
-                Vec3 fwd = camera->forward();
-                for (float t = 2.f; t < 500.f; t += 2.f)
+                int mx, my;
+                SDL_GetMouseState(&mx, &my);
+                Vec3 ray = camera->screen_to_ray((float)mx, (float)my, w, h);
+                Vec3 hit;
+                if (terrain->pick(camera->get_position(), ray, 1500.f, hit))
                 {
-                    Vec3 p = o + fwd * t;
-                    if (p.y <= terrain->height_at(p.x, p.z))
-                    {
-                        terrain->modify_height(p.x, p.z, 22.f, dir * 20.f * dt);
-                        break;
-                    }
+                    if (dir != 0.f) terrain->modify_height(hit.x, hit.z, 22.f, dir * 20.f * dt);
+                    if (smooth) terrain->smooth_height(hit.x, hit.z, 22.f, 1);
                 }
             }
         }
         scene.update(dt);
-
-        int w, h;
-        app.DrawableSize(&w, &h);
         terrain->set_lod_camera(60.f, h); // drives the de Boer LOD formula
         renderer.render(scene, w, h);
         perf.tick(frame, renderer.last_item_count(), dt);

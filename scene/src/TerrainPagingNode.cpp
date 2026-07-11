@@ -377,6 +377,113 @@ float TerrainPagingNode::height_at(float x, float z) const
     return h + (d00 * (1.f - fx) + d10 * fx) * (1.f - fz) + (d01 * (1.f - fx) + d11 * fx) * fz;
 }
 
+Vec3 TerrainPagingNode::normal_at(float x, float z) const
+{
+    const float step = m_cellSize / (float)(m_pageSize - 1);
+    const float hl = height_at(x - step, z), hr = height_at(x + step, z);
+    const float hd = height_at(x, z - step), hu = height_at(x, z + step);
+    return Vec3(hl - hr, 2.f * step, hd - hu).normalized();
+}
+
+// coarse march (half a grid step) until the ray dips under the surface,
+// then bisect the last interval for a precise contact point
+bool TerrainPagingNode::pick(const Vec3& origin, const Vec3& dir, float maxDist,
+                             Vec3& hit) const
+{
+    const float step = 0.5f * m_cellSize / (float)(m_pageSize - 1);
+    float tPrev = 0.f;
+    for (float t = step; t <= maxDist; t += step)
+    {
+        Vec3 p = origin + dir * t;
+        if (p.y <= height_at(p.x, p.z))
+        {
+            float lo = tPrev, hi = t;
+            for (int i = 0; i < 10; ++i)
+            {
+                const float mid = (lo + hi) * 0.5f;
+                Vec3 m = origin + dir * mid;
+                if (m.y <= height_at(m.x, m.z))
+                    hi = mid;
+                else
+                    lo = mid;
+            }
+            hit = origin + dir * ((lo + hi) * 0.5f);
+            hit.y = height_at(hit.x, hit.z);
+            return true;
+        }
+        tPrev = t;
+    }
+    return false;
+}
+
+// same relaxation kernel as TerrainLodNode::smooth_area (4-2-1 / 16 with a
+// (1 - d²) rim falloff), applied to the effective heightfield and stored
+// back as edit deltas so it survives paging like any brush stroke
+void TerrainPagingNode::smooth_height(float x, float z, float radius, int iterations)
+{
+    if (radius <= 0.f || iterations < 1) return;
+    const int n = m_pageSize;
+    const float step = m_cellSize / (float)(n - 1);
+
+    const gl::i32 cxmin = (gl::i32)floorf((x - radius) / m_cellSize);
+    const gl::i32 cxmax = (gl::i32)floorf((x + radius) / m_cellSize);
+    const gl::i32 cymin = (gl::i32)floorf((z - radius) / m_cellSize);
+    const gl::i32 cymax = (gl::i32)floorf((z + radius) / m_cellSize);
+
+    for (int it = 0; it < iterations; ++it)
+    {
+        for (gl::i32 cy = cymin; cy <= cymax; ++cy)
+        {
+            for (gl::i32 cx = cxmin; cx <= cxmax; ++cx)
+            {
+                auto pit = m_pages.find(page_key(cx, cy));
+                if (pit == m_pages.end()) continue;
+
+                std::vector<float>& d = m_edits[page_key(cx, cy)];
+                if (d.empty()) d.assign((size_t)n * n, 0.f);
+
+                const float ox = (float)cx * m_cellSize;
+                const float oz = (float)cy * m_cellSize;
+                // new deltas staged apart so the kernel reads a stable field
+                std::vector<std::pair<size_t, float>> staged;
+                for (int j = 0; j < n; ++j)
+                {
+                    for (int i = 0; i < n; ++i)
+                    {
+                        const float wx = ox + (float)i * step;
+                        const float wz = oz + (float)j * step;
+                        const float dx = wx - x, dz = wz - z;
+                        const float ds = (dx * dx + dz * dz) / (radius * radius);
+                        if (ds > 1.f) continue;
+
+                        const float h = height_at(wx, wz);
+                        const float avg =
+                            (h * 4.f + height_at(wx - step, wz) * 2.f +
+                             height_at(wx + step, wz) * 2.f + height_at(wx, wz - step) * 2.f +
+                             height_at(wx, wz + step) * 2.f + height_at(wx - step, wz - step) +
+                             height_at(wx + step, wz - step) + height_at(wx - step, wz + step) +
+                             height_at(wx + step, wz + step)) /
+                            16.f;
+                        const float target = h + (avg - h) * (1.f - ds);
+                        const float base = m_heightFn ? m_heightFn(wx, wz) : 0.f;
+                        staged.push_back({(size_t)j * n + i, target - base});
+                    }
+                }
+                for (auto& s : staged)
+                    d[s.first] = s.second;
+            }
+        }
+    }
+
+    // one geometry refresh per touched page, after all iterations
+    for (gl::i32 cy = cymin; cy <= cymax; ++cy)
+        for (gl::i32 cx = cxmin; cx <= cxmax; ++cx)
+        {
+            auto pit = m_pages.find(page_key(cx, cy));
+            if (pit != m_pages.end()) rebuild_page_geometry(pit->second, cx, cy);
+        }
+}
+
 // grid vertices for page (cx,cy) into m_vtxScratch (skirt slots included
 // but not yet positioned — build_page/rebuild handle the skirt drop)
 void TerrainPagingNode::fill_vertices(gl::i32 cx, gl::i32 cy, float& hmin, float& hmax)

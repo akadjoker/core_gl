@@ -41,6 +41,16 @@ public:
     Mat4 get_view_matrix();              // rigid inverse of the world transform
     Mat4 get_view_projection();
 
+    // ── picking ──
+    // world-space ray direction through pixel (px,py) of a viewport_w x
+    // viewport_h viewport — mouse picking is `pick(cam->get_position(),
+    // cam->screen_to_ray(mx, my, w, h), ...)`
+    Vec3 screen_to_ray(float px, float py, int viewport_w, int viewport_h);
+    // projects a world point to pixel coordinates; false when behind the
+    // camera (out params untouched)
+    bool world_to_screen(const Vec3& world, int viewport_w, int viewport_h, float& sx,
+                         float& sy);
+
 private:
     Projection m_projection;
     float m_fov; // degrees, vertical (perspective)

@@ -86,12 +86,20 @@ public:
     gl::Texture* layer_texture(int i) const { return m_layers[i].diffuse; }
     float layer_tiling(int i) const { return m_cellSize / m_layers[i].worldSize; }
 
-    // ── editing ──
+    // ── queries ──
     // effective height: height function + accumulated brush edits
     float height_at(float x, float z) const;
-    // smooth circular brush, raises (amount > 0) or lowers; edits persist
-    // even when the page streams out and back in
+    // surface normal of the effective heightfield (grid-step differences)
+    Vec3 normal_at(float x, float z) const;
+    // ray vs. the effective heightfield: coarse march + bisection refine.
+    // Pair with Camera3D::screen_to_ray for mouse picking.
+    bool pick(const Vec3& origin, const Vec3& dir, float maxDist, Vec3& hit) const;
+
+    // ── editing (edits persist across page unload/reload) ──
+    // smooth circular brush, raises (amount > 0) or lowers
     void modify_height(float x, float z, float radius, float amount);
+    // relaxes the area toward its local average (3x3 kernel, falloff rim)
+    void smooth_height(float x, float z, float radius, int iterations = 2);
 
     // renderer-facing: draws every resident page with the bound splat
     // shader (frustum-culled); the renderer owns shader/layer binding
