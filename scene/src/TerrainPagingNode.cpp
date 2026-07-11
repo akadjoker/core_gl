@@ -215,6 +215,12 @@ void TerrainPagingNode::_update(float dt)
 // are clamped to the extent when the world is bounded (Ogre's cell range).
 void TerrainPagingNode::update_paging()
 {
+    // fixed world fully resident: nothing can load or unload, skip the
+    // whole scan — from here on only LOD selection and edits do work
+    if (m_bounded &&
+        (int)m_pages.size() == (m_maxX - m_minX + 1) * (m_maxY - m_minY + 1))
+        return;
+
     // camera → grid cell (grid origin = this node's origin)
     const float gx = m_camPos.x / m_cellSize;
     const float gy = m_camPos.z / m_cellSize;

@@ -54,8 +54,8 @@ int main(int argc, char** argv)
     TerrainPagingNode* terrain = scene.root().create_child<TerrainPagingNode>("world");
     terrain->set_page_size(257) // mobile/web: 129, desktop: 257
         .set_cell_size(512.f)
-        .set_load_radius(1200.f)
-        .set_hold_radius(1600.f);
+        .set_load_radius(2000.f) // to the far plane: distant pages are cheap at L4
+        .set_hold_radius(2500.f);
     if (getenv("COREGL_FIXED"))
     {
         // fixed-size terrain: a heightmap image stretched over 4x4 pages
