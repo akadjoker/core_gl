@@ -221,6 +221,8 @@ bool SceneRenderer::init()
         m_terrainShader.SetInt(name, 2 + i);
     }
     m_terrainShader.SetInt("u_layerCount", 0);
+    m_terrainShader.SetInt("u_shadowMap", 10); // CSM array, past the layer units
+    m_terrainShader.SetInt("u_cascadeCount", 0);
 
     // ocean pass is optional: a compile failure only disables OceanNodes
     m_ocean_ready = loadStage(m_oceanShader, gl::PipelineStage::VERTEX, kOceanVS) &&
@@ -403,6 +405,10 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
             gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
                                       item.first_index);
         }
+        // splat-mode terrain pages cast too (they aren't RenderItems);
+        // culled against the same cascade frustum, at their current LOD
+        for (TerrainPagingNode* t : m_pagedTerrains)
+            t->render_pages_depth(&m_depth, m_locDepthMVP, m_cascadeMat[c], &cascadeFrustum);
     }
     gl::Renderer::SetPolygonOffset(false);
 }
@@ -632,10 +638,39 @@ void SceneRenderer::draw_paged_terrain(const RenderView& v, const Frustum& frust
     m_terrainShader.SetVec4(m_locTClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
                             v.clip_plane.w);
 
+    // same CSM the forward pass uses; the terrain shader samples it with
+    // the identical occlusion functions
+    m_terrainShader.SetInt("u_cascadeCount", m_cascades);
+    if (m_cascades > 0)
+    {
+        m_shadowTex.Bind(10);
+        m_terrainShader.SetVec2("u_shadowMapSize", (float)m_shadowSize, (float)m_shadowSize);
+        for (int i = 0; i < m_cascades; ++i)
+        {
+            char name[32];
+            snprintf(name, sizeof(name), "u_lightViewProj[%d]", i);
+            m_terrainShader.SetMat4(name, m_cascadeMat[i].x);
+            snprintf(name, sizeof(name), "u_splits[%d]", i);
+            m_terrainShader.SetFloat(name, m_splits[i + 1]);
+        }
+    }
+
+    m_terrainShader.SetVec3("u_cameraPos", v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
+
     for (TerrainPagingNode* t : m_pagedTerrains)
     {
         const int n = t->layer_count();
         m_terrainShader.SetInt("u_layerCount", n);
+
+        // per-node linear fog (end <= 0 disables in the shader)
+        if (t->fog_enabled())
+        {
+            const Vec3& fc = t->fog_color();
+            m_terrainShader.SetVec3("u_fogColor", fc.x, fc.y, fc.z);
+            m_terrainShader.SetVec2("u_fogRange", t->fog_start(), t->fog_end());
+        }
+        else
+            m_terrainShader.SetVec2("u_fogRange", 0.f, 0.f);
         for (int i = 0; i < n; ++i)
         {
             char name[32];
@@ -1001,6 +1036,10 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     Mat4 view = camera->get_view_matrix();
     Vec3 cameraPos = camera->get_global_position();
 
+    // collected before the shadow pass: splat pages cast shadows too
+    m_pagedTerrains.clear();
+    collect_paged_terrain(&scene.root(), m_pagedTerrains);
+
     // ── shadow views: one depth-only view per cascade ──
     if (m_cascades > 0) draw_shadow_views(scene, camera);
 
@@ -1011,8 +1050,6 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
 
     m_waters.clear();
     collect_water(&scene.root(), m_waters);
-    m_pagedTerrains.clear();
-    collect_paged_terrain(&scene.root(), m_pagedTerrains);
 
     // ── extra views: one reflection + one refraction per water surface ──
     for (WaterNode* w : m_waters)

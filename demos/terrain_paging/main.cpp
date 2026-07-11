@@ -55,9 +55,18 @@ int main(int argc, char** argv)
     terrain->set_page_size(257) // mobile/web: 129, desktop: 257
         .set_cell_size(512.f)
         .set_load_radius(1200.f)
-        .set_hold_radius(1600.f)
-        .set_height_function(worldHeight);
-    // bounded world instead of infinite: terrain->set_extent(-4, -4, 3, 3);
+        .set_hold_radius(1600.f);
+    if (getenv("COREGL_FIXED"))
+    {
+        // fixed-size terrain: a heightmap image stretched over 4x4 pages
+        // (2048x2048 world units), nothing beyond the extent
+        terrain->set_extent(-2, -2, 1, 1)
+            .set_heightmap("assets/terrain/terrain-heightmap.png", 0.f, 60.f);
+    }
+    else
+    {
+        terrain->set_height_function(worldHeight); // infinite procedural
+    }
 
     // Ogre-style splatting: base grass; ground/rock/sand/snow mixed on top
     // by height and slope. worldSize = meters one texture repeat covers.
@@ -66,6 +75,9 @@ int main(int argc, char** argv)
         .set_layer(2, rock, 20.f)
         .set_layer(3, sand, 10.f)
         .set_layer(4, snow, 16.f)
+        .set_fog(true) // fades the terrain into the horizon before the far plane
+        .set_fog_color(0.62f, 0.72f, 0.82f)
+        .set_fog_range(500.f, 1800.f)
         .set_blend_function(
             [](float, float, float h, float slope, float w[4])
             {

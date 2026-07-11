@@ -67,6 +67,12 @@ public:
     // seen, instead of one per frame (no pop-in at startup). Default on.
     TerrainPagingNode& set_prewarm(bool on);
     TerrainPagingNode& set_height_function(HeightFn fn);
+    // fixed-size (non-infinite) terrain from an image: the heightmap is
+    // stretched over the extent, red channel mapped to minH..maxH. Call
+    // set_extent first (defaults to a single page at the origin otherwise);
+    // total world size = extent cells * cell_size. Editing still works —
+    // brushes layer deltas on top of the image heights.
+    TerrainPagingNode& set_heightmap(const char* path, float minHeight, float maxHeight);
     // base texture stretches once per page; detail map tiles over it
     TerrainPagingNode& set_texture(gl::Texture* diffuse, gl::Texture* detail = nullptr,
                                    float detailScale = 40.f);
@@ -86,6 +92,15 @@ public:
     gl::Texture* layer_texture(int i) const { return m_layers[i].diffuse; }
     float layer_tiling(int i) const { return m_cellSize / m_layers[i].worldSize; }
 
+    // ── distance fog (terrain only, linear start..end) ──
+    TerrainPagingNode& set_fog(bool on);
+    TerrainPagingNode& set_fog_color(float r, float g, float b);
+    TerrainPagingNode& set_fog_range(float startDist, float endDist);
+    bool fog_enabled() const { return m_fogEnabled; }
+    const Vec3& fog_color() const { return m_fogColor; }
+    float fog_start() const { return m_fogStart; }
+    float fog_end() const { return m_fogEnd; }
+
     // ── queries ──
     // effective height: height function + accumulated brush edits
     float height_at(float x, float z) const;
@@ -104,6 +119,9 @@ public:
     // renderer-facing: draws every resident page with the bound splat
     // shader (frustum-culled); the renderer owns shader/layer binding
     void render_pages(gl::Shader* shader, gl::i32 locModel, const Frustum* frustum);
+    // depth-only variant for the CSM pass: sets lightVP * model as one MVP
+    void render_pages_depth(gl::Shader* shader, gl::i32 locMVP, const Mat4& lightVP,
+                            const Frustum* frustum);
 
     // ── LOD (Ogre defaults) ──
     // max on-screen error in pixels before a page drops to a finer level
@@ -177,10 +195,16 @@ private:
     Layer m_layers[5];
     int m_layerCount = 0;
     BlendFn m_blendFn;
+    bool m_fogEnabled = false;
+    Vec3 m_fogColor = Vec3(0.62f, 0.72f, 0.82f); // matches the sky horizon
+    float m_fogStart = 400.f, m_fogEnd = 1600.f;
     // brush edits, keyed by page: n*n height deltas added on top of the
     // height function — kept when the page unloads so edits survive paging
     std::unordered_map<gl::u64, std::vector<float>> m_edits;
     std::vector<gl::u8> m_blendScratch; // reused per blend-map build
+    std::vector<float> m_hbufScratch;   // padded height grid, reused per build
+    std::vector<float> m_hmData;        // heightmap mode: image heights
+    int m_hmW = 0, m_hmH = 0;
 
     Vec3 m_camPos = Vec3(0.f, 0.f, 0.f);
     std::unordered_map<gl::u64, Page> m_pages;

@@ -938,21 +938,26 @@ CLIP_VARYING
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_worldPos;
+out float v_viewDepth;
 void main()
 {
     vec4 worldPos = u_model * vec4(a_position, 1.0);
     v_worldPos = worldPos.xyz;
     v_normal = normalize(mat3(u_model) * a_normal);
     v_uv = a_uv;
+    v_viewDepth = -(u_view * worldPos).z; // positive distance ahead of the eye
     CLIP_SETUP(dot(worldPos, u_clipPlane));
     gl_Position = u_viewProj * worldPos;
 }
 )";
 
+// splatting + the same CSM occlusion as the forward shader (functions
+// copied verbatim: Poisson near, 5x5 grid far, slope bias, cross-fade)
 static const char* kTerrainFS = R"(
 in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_worldPos;
+in float v_viewDepth;
 CLIP_VARYING
 out vec4 OutColor;
 
@@ -967,6 +972,71 @@ uniform sampler2D u_blendMap1;
 uniform float u_layerTiling[8];
 uniform int u_layerCount;
 
+uniform sampler2DArray u_shadowMap;
+uniform mat4 u_lightViewProj[4];
+uniform float u_splits[4]; // far edge of each cascade, in view depth
+uniform int u_cascadeCount; // 0 = shadows off
+uniform vec2 u_shadowMapSize;
+
+// linear distance fog: x = start, y = end; y <= 0 disables
+uniform vec3 u_fogColor;
+uniform vec2 u_fogRange;
+
+const vec2 kPoisson[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+    vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
+    vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+    vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+    vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
+
+float shadowSample(int layer, vec2 uv)
+{
+    return texture(u_shadowMap, vec3(uv, float(layer))).r;
+}
+
+float shadowBias(int layer, float baseBias, float slopeBias)
+{
+    float ndl = max(dot(normalize(v_normal), -u_lightDir), 0.0);
+    return (baseBias + slopeBias * (1.0 - ndl)) * (1.0 + float(layer) * 0.2);
+}
+
+float shadowPoisson(int layer, vec3 p)
+{
+    float bias = shadowBias(layer, 0.0005, 0.0006);
+    vec2 texel = 1.0 / u_shadowMapSize;
+    float occ = 0.0;
+    for (int i = 0; i < 16; ++i)
+    {
+        float d = shadowSample(layer, p.xy + kPoisson[i] * texel * 1.4);
+        occ += (p.z - bias) > d ? 1.0 : 0.0;
+    }
+    return occ / 16.0;
+}
+
+float shadowGrid(int layer, vec3 p)
+{
+    float bias = shadowBias(layer, 0.0008, 0.0006);
+    vec2 texel = 1.0 / u_shadowMapSize;
+    float occ = 0.0;
+    for (int x = -2; x <= 2; ++x)
+        for (int y = -2; y <= 2; ++y)
+            occ += (p.z - bias) > shadowSample(layer, p.xy + vec2(x, y) * texel) ? 1.0 : 0.0;
+    return occ / 25.0;
+}
+
+float shadowOcclusion(int layer)
+{
+    vec3 offsetPos = v_worldPos + normalize(v_normal) * (0.05 + 0.05 * float(layer));
+    vec4 lp = u_lightViewProj[layer] * vec4(offsetPos, 1.0);
+    vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
+    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 0.0;
+    if (layer <= 1) return shadowPoisson(layer, p);
+    return shadowGrid(layer, p);
+}
+
 void main()
 {
     CLIP_APPLY
@@ -974,6 +1044,34 @@ void main()
     vec3 N = normalize(v_normal);
     vec3 L = normalize(-u_lightDir);
     float NdotL = max(dot(N, L), 0.0);
+
+    float occlusion = 0.0;
+    if (u_cascadeCount > 0)
+    {
+        int layer = u_cascadeCount - 1;
+        for (int i = 0; i < u_cascadeCount; ++i)
+        {
+            if (v_viewDepth < u_splits[i])
+            {
+                layer = i;
+                break;
+            }
+        }
+        // cross-fade into the next cascade over the last 15% of this one
+        if (layer < u_cascadeCount - 1)
+        {
+            float edge = u_splits[layer];
+            float blend = smoothstep(edge * 0.85, edge, v_viewDepth);
+            occlusion = (blend > 0.001)
+                            ? mix(shadowOcclusion(layer), shadowOcclusion(layer + 1), blend)
+                            : shadowOcclusion(layer);
+        }
+        else
+        {
+            occlusion = shadowOcclusion(layer);
+        }
+    }
+    NdotL *= (1.0 - occlusion);
 
     // Start with layer 0 (base layer, always full weight)
     vec4 diffuse = texture(u_layerDiffuse[0], v_uv * u_layerTiling[0]);
@@ -1002,6 +1100,15 @@ void main()
 
     vec3 ambient = diffuse.rgb * u_ambient;
     vec3 lit = diffuse.rgb * NdotL;
-    OutColor = vec4(ambient + lit, 1.0);
+    vec3 color = ambient + lit;
+
+    if (u_fogRange.y > 0.0)
+    {
+        float dist = length(v_worldPos - u_cameraPos);
+        float fog = clamp((dist - u_fogRange.x) / (u_fogRange.y - u_fogRange.x), 0.0, 1.0);
+        color = mix(color, u_fogColor, fog);
+    }
+
+    OutColor = vec4(color, 1.0);
 }
 )";

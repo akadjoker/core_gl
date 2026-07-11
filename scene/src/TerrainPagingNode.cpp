@@ -2,6 +2,7 @@
 #include "scene/Material.hpp"
 #include "scene/MeshInstance.hpp"
 #include <coregl/gl_log.hpp>
+#include "scene/Pixmap.hpp"
 #include <coregl/gl_renderer.hpp>
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
@@ -82,6 +83,53 @@ TerrainPagingNode& TerrainPagingNode::set_prewarm(bool on)
 TerrainPagingNode& TerrainPagingNode::set_height_function(HeightFn fn)
 {
     m_heightFn = std::move(fn);
+    return *this;
+}
+
+// bounded terrain from an image: red channel -> minH..maxH, bilinear,
+// stretched over the extent (Ogre TerrainGroup loading a single heightmap)
+TerrainPagingNode& TerrainPagingNode::set_heightmap(const char* path, float minHeight,
+                                                    float maxHeight)
+{
+    scene::Pixmap img;
+    if (!img.load(path))
+    {
+        gl::Log::Error("TerrainPagingNode: cannot open heightmap '%s'", path);
+        return *this;
+    }
+    if (!m_bounded)
+    {
+        gl::Log::Warn("TerrainPagingNode: set_heightmap without set_extent — using one page");
+        set_extent(0, 0, 0, 0);
+    }
+
+    m_hmW = (int)img.width;
+    m_hmH = (int)img.height;
+    m_hmData.resize((size_t)m_hmW * m_hmH);
+    for (int y = 0; y < m_hmH; ++y)
+        for (int x = 0; x < m_hmW; ++x)
+            m_hmData[(size_t)y * m_hmW + x] =
+                minHeight +
+                (maxHeight - minHeight) * (float)img.get_pixel_color(x, y).r() / 255.f;
+
+    const float wx0 = (float)m_minX * m_cellSize;
+    const float wz0 = (float)m_minY * m_cellSize;
+    const float ww = (float)(m_maxX - m_minX + 1) * m_cellSize;
+    const float wh = (float)(m_maxY - m_minY + 1) * m_cellSize;
+    m_heightFn = [this, wx0, wz0, ww, wh](float x, float z) -> float
+    {
+        float u = (x - wx0) / ww * (float)(m_hmW - 1);
+        float v = (z - wz0) / wh * (float)(m_hmH - 1);
+        u = std::min(std::max(u, 0.f), (float)(m_hmW - 1));
+        v = std::min(std::max(v, 0.f), (float)(m_hmH - 1));
+        const int i = std::min((int)u, m_hmW - 2), j = std::min((int)v, m_hmH - 2);
+        const float fu = u - (float)i, fv = v - (float)j;
+        const float* d = m_hmData.data();
+        const float h00 = d[(size_t)j * m_hmW + i], h10 = d[(size_t)j * m_hmW + i + 1];
+        const float h01 = d[(size_t)(j + 1) * m_hmW + i],
+                    h11 = d[(size_t)(j + 1) * m_hmW + i + 1];
+        return (h00 * (1.f - fu) + h10 * fu) * (1.f - fv) + (h01 * (1.f - fu) + h11 * fu) * fv;
+    };
     return *this;
 }
 
@@ -496,19 +544,28 @@ void TerrainPagingNode::fill_vertices(gl::i32 cx, gl::i32 cy, float& hmin, float
     m_vtxScratch.resize((size_t)n * n + (size_t)4 * n);
     hmin = 1e30f;
     hmax = -1e30f;
+
+    // sample the (padded) height grid once — each height is needed by the
+    // vertex itself and by four neighbors' normals, so sampling per use
+    // would call the height source ~5x more than necessary
+    const int pn = n + 2; // one ring of padding for the border normals
+    m_hbufScratch.resize((size_t)pn * pn);
+    for (int j = -1; j <= n; ++j)
+        for (int i = -1; i <= n; ++i)
+            m_hbufScratch[(size_t)(j + 1) * pn + (i + 1)] =
+                height_at(ox + (float)i * step, oz + (float)j * step);
+
     for (int j = 0; j < n; ++j)
     {
+        const float* row = &m_hbufScratch[(size_t)(j + 1) * pn + 1];
         for (int i = 0; i < n; ++i)
         {
-            const float wx = ox + (float)i * step;
-            const float wz = oz + (float)j * step;
             MeshVertex& v = m_vtxScratch[(size_t)j * n + i];
-            const float h = height_at(wx, wz);
+            const float h = row[i];
             v.position = Vec3((float)i * step, h, (float)j * step);
-            // central differences on the height source, step-sized
-            const float hl = height_at(wx - step, wz), hr = height_at(wx + step, wz);
-            const float hd = height_at(wx, wz - step), hu = height_at(wx, wz + step);
-            v.normal = Vec3(hl - hr, 2.f * step, hd - hu).normalized();
+            // central differences on the height buffer, step-sized
+            v.normal = Vec3(row[i - 1] - row[i + 1], 2.f * step, row[i - pn] - row[i + pn])
+                           .normalized();
             v.tangent = Vec4(1.f, 0.f, 0.f, 1.f);
             // base texture stretches once per page; detail map tiles over it
             v.uv = Vec2((float)i / (float)(n - 1), (float)j / (float)(n - 1));
@@ -629,6 +686,25 @@ TerrainPagingNode& TerrainPagingNode::set_layer(int i, gl::Texture* diffuse, flo
 TerrainPagingNode& TerrainPagingNode::set_blend_function(BlendFn fn)
 {
     m_blendFn = std::move(fn);
+    return *this;
+}
+
+TerrainPagingNode& TerrainPagingNode::set_fog(bool on)
+{
+    m_fogEnabled = on;
+    return *this;
+}
+
+TerrainPagingNode& TerrainPagingNode::set_fog_color(float r, float g, float b)
+{
+    m_fogColor = Vec3(r, g, b);
+    return *this;
+}
+
+TerrainPagingNode& TerrainPagingNode::set_fog_range(float startDist, float endDist)
+{
+    m_fogStart = startDist;
+    m_fogEnd = endDist > startDist + 1.f ? endDist : startDist + 1.f;
     return *this;
 }
 
@@ -761,6 +837,33 @@ void TerrainPagingNode::render_pages(gl::Shader* shader, gl::i32 locModel,
 
         if (p.blend) p.blend->Bind(0);
         shader->SetMat4(locModel, model.x);
+        p.mesh->vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES,
+                                  p.mesh->surfaces()[0].index_count);
+    }
+}
+
+void TerrainPagingNode::render_pages_depth(gl::Shader* shader, gl::i32 locMVP,
+                                           const Mat4& lightVP, const Frustum* frustum)
+{
+    const Mat4 base = get_global_transform();
+    for (auto& kv : m_pages)
+    {
+        Page& p = kv.second;
+        if (!p.mesh || !p.mesh->is_uploaded() || p.mesh->surfaces().empty()) continue;
+
+        const gl::i32 cx = (gl::i32)(kv.first >> 32), cy = (gl::i32)(kv.first & 0xffffffffu);
+        Mat4 model = base * Mat4::Translate((float)cx * m_cellSize, 0.f, (float)cy * m_cellSize);
+
+        if (frustum)
+        {
+            BoundingBox world =
+                BoundingBox::TransformBoundingBox(p.mesh->surfaces()[0].bounds, model);
+            if (!frustum->ContainsBox(world)) continue;
+        }
+
+        Mat4 mvp = lightVP * model;
+        shader->SetMat4(locMVP, mvp.x);
         p.mesh->vao().Bind();
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES,
                                   p.mesh->surfaces()[0].index_count);
