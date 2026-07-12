@@ -72,6 +72,65 @@ void main()
 }
 )";
 
+// ── BSP lightmapped shader: no tangents, uv2 for lightmap ──────────────────
+// Vertex: pos(0) normal(1) uv(3) uv2(4)  —  no tangent(2)
+// Fragment: diffuse * lightmap * lambert, no shadows
+static const char* kBSP_VS = R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 3) in vec2 a_uv;
+layout(location = 4) in vec2 a_uv2;
+uniform mat4 u_model;
+uniform mat4 u_viewProj;
+uniform mat4 u_view;
+uniform vec4 u_clipPlane;
+out vec3 v_normal;
+out vec2 v_uv;
+out vec2 v_uv2;
+out vec3 v_worldPos;
+out float v_viewDepth;
+CLIP_VARYING
+void main()
+{
+    vec4 worldPos = u_model * vec4(a_position, 1.0);
+    v_worldPos = worldPos.xyz;
+    v_normal = normalize(mat3(u_model) * a_normal);
+    v_uv = a_uv;
+    v_uv2 = a_uv2;
+ 
+    CLIP_SETUP(dot(worldPos, u_clipPlane));
+    gl_Position = u_viewProj * worldPos;
+}
+)";
+
+// BSP fragment: lambert diffuse + ambient, no specular, no CSM, no point
+// lights — the lightmap already baked the global illumination.
+static const char* kBSP_FS = R"(
+in vec3 v_normal;
+in vec2 v_uv;
+in vec2 v_uv2;
+ 
+ 
+out vec4 OutColor;
+
+uniform vec3 u_baseColor;
+ 
+uniform sampler2D u_diffuse;   // albedo
+uniform sampler2D u_detail;    // lightmap
+uniform vec3 u_cameraPos;
+CLIP_VARYING
+
+void main()
+{
+    vec3 albedo = texture(u_diffuse, v_uv).rgb * u_baseColor;
+    vec3 lm     = texture(u_detail, v_uv2).rgb;
+    vec3 lit = albedo * lm * 6.0;
+
+    OutColor = vec4(lit, 1.0);
+    CLIP_APPLY
+}
+)";
+
 // Blinn-phong + CSM. Occlusion sampling: Poisson-disk PCF on the two near
 // cascades (soft, no banding up close), 5x5 grid PCF on the far ones
 // (cheaper where nobody can tell). Slope-scaled bias grows per cascade;

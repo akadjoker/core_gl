@@ -26,6 +26,7 @@ public:
 
     bool double_sided = false; // disables backface culling for this item
     bool unlit = false;        // skip lighting: output the flat color/texture
+    bool lightmapped = false;  // BSP: modulate diffuse * detail using uv2
 
     float specular = 0.f; // 0 = matte; blinn-phong strength
     float shininess = 32.f;

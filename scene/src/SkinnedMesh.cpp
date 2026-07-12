@@ -2,6 +2,7 @@
 #include "scene/ByteArray.hpp"
 #include "scene/Filesystem.hpp"
 #include <coregl/gl_log.hpp>
+#include <algorithm>
 
 // chunk ids — must match exporter/src/MeshFormat.hpp
 static const gl::u32 kMeshMagic = 0x4D455348; // "MESH"
@@ -196,6 +197,10 @@ bool SkinnedMesh::load(const char* meshPath)
     }
 
     std::vector<Surface> surfaces = m_mesh.surfaces();
+    // Sort by material slot — groups same-material draws together.
+    std::sort(surfaces.begin(), surfaces.end(), [](const Surface& a, const Surface& b) {
+        return a.material_slot < b.material_slot;
+    });
     m_mesh.set_data(verts.data(), (gl::u32)verts.size(), indices.data(),
                     (gl::u32)indices.size());
     for (const Surface& s : surfaces)

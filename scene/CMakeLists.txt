@@ -36,6 +36,7 @@ add_library(scene STATIC
     src/AssetManager.cpp
     src/Color.cpp
     src/Pixmap.cpp
+    src/BSPLoader.cpp
     src/stb_impl.cpp
 )
 

@@ -4,8 +4,12 @@
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
 
+#include <string>
+#include <vector>
+
 class Mesh;
 class SkinnedMesh;
+class Material;
 
 namespace assets
 {
@@ -67,6 +71,18 @@ public:
     SkinnedMesh* loadSkinnedMesh(const char* name, const char* meshPath);
     SkinnedMesh* getSkinnedMesh(const char* name);
     bool loadAnimation(const char* name, const char* animPath);
+
+
+    // Loads a Quake 3 BSP map (IBSP v46).  Polygon and mesh faces are
+    // imported directly; Bezier patches are tessellated (level 5).  Vertices
+    // are converted from Z-up to Y-up.  One Material is created per texture
+    // group and pushed into `out_mats` (caller owns the pointers).
+    // `textureDir` is prepended to texture names when loading image files;
+    // .tga/.jpg/.png/.bmp are tried in that order.
+    // Returns nullptr on I/O or parse failure (error is logged).
+    Mesh* load_bsp_mesh(const char* name, const char* path,
+                     std::vector<Material*>& out_mats,
+                     const char* textureDir = "");
 
     void clear();
 

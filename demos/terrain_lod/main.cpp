@@ -7,7 +7,7 @@
 
 #include "demo_app.hpp"
 #include "demo_fly.hpp"
-#include "demo_perf.hpp"
+ 
 #include <scene/Scene.hpp>
 #include <scene/SceneRenderer.hpp>
 #include <scene/Material.hpp>
@@ -67,7 +67,7 @@ int main(int argc, char** argv)
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
 
-    PerfPrinter perf;
+ 
     int frame = 0;
     bool running = true;
     while (running)
@@ -105,7 +105,7 @@ int main(int argc, char** argv)
         int w, h;
         app.DrawableSize(&w, &h);
         renderer.render(scene, w, h);
-        perf.tick(frame, renderer.last_item_count(), dt);
+     
         app.EndFrame();
 
         // LOD proof: triangle count follows the camera

@@ -5,7 +5,7 @@
 
 class SkinnedMeshInstance;
 
-// Ogre's TagPoint: a Node3D that follows one bone of a SkinnedMeshInstance.
+// Node3D that follows one bone of a SkinnedMeshInstance.
 // Each frame (after the instance animated) it copies the bone's global pose
 // into its own transform; children — a sword, a lantern — ride the scene
 // graph normally from there. This is the ONLY bone-node in the engine:

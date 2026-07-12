@@ -3,6 +3,7 @@
 #include "scene/Filesystem.hpp"
 #include "scene/Mesh.hpp"
 #include <coregl/gl_log.hpp>
+#include <algorithm>
 
 // chunk ids — must match exporter/src/MeshFormat.hpp
 static const u32 kMeshMagic = 0x4D455348; // "MESH"
@@ -180,6 +181,11 @@ bool MeshLoader::load(const char* path, Mesh& out, std::vector<MaterialDesc>* ma
 
     // set_data clears surfaces, so stash the ones parseBuffer registered
     std::vector<Surface> surfaces = out.surfaces();
+    // Sort by material slot so the renderer naturally groups same-material
+    // draws together — reduces texture binds with zero per-frame cost.
+    std::sort(surfaces.begin(), surfaces.end(), [](const Surface& a, const Surface& b) {
+        return a.material_slot < b.material_slot;
+    });
     out.set_data(verts.data(), (u32)verts.size(), indices.data(), (u32)indices.size());
     for (const Surface& s : surfaces)
         out.add_surface(s.first_index, s.index_count, s.material_slot, s.bounds);

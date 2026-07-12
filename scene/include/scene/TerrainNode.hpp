@@ -3,7 +3,7 @@
 #include "scene/MeshInstance.hpp"
 #include "scene/Mesh.hpp"
 
-// Block-based heightmap terrain, ported from the old engine's TerrainNode.
+// Block-based heightmap terrain
 // The heightmap becomes blocks of 33x33 vertices, each with its own AABB —
 // here every block is one SURFACE of a single Mesh, so the scene's
 // per-surface frustum culling does exactly what the old per-block cull did,

@@ -42,6 +42,11 @@ public:
     void compute_tangents();
     void compute_bounds();
 
+    // Optional lightmap UVs: separate VBO (Vec2 per vertex, same count as
+    // vertices). Only BSP meshes use this — other meshes stay unchanged.
+    void set_lightmap_uvs(const Vec2* uvs, u32 count);
+    bool has_lightmap_uvs() const { return m_has_lightmap_uvs; }
+
     // ── GPU ──
     void upload();         // builds the GL buffers/VAO from the CPU data
     void upload_dynamic(); // same but with DYNAMIC_DRAW usage (for deformable terrain)
@@ -78,4 +83,8 @@ private:
     gl::VertexArray m_vao;
     bool m_uploaded = false;
     bool m_dynamic = false;
+
+    // lightmap UVs (optional, only BSP meshes)
+    gl::Buffer m_uv2_vbo;
+    bool m_has_lightmap_uvs = false;
 };

@@ -6,7 +6,7 @@
 
 #include "demo_app.hpp"
 #include "demo_fly.hpp"
-#include "demo_perf.hpp"
+ 
 #include <scene/Scene.hpp>
 #include <scene/SceneRenderer.hpp>
 #include <scene/TerrainPagingNode.hpp>
@@ -114,7 +114,7 @@ int main(int argc, char** argv)
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
     float timeOfDay = getenv("COREGL_TOD") ? (float)atof(getenv("COREGL_TOD")) : 0.9f;
-    PerfPrinter perf;
+ 
     int frame = 0;
     bool running = true, debugColors = false;
     while (running)
@@ -187,7 +187,7 @@ int main(int argc, char** argv)
         scene.update(dt);
         terrain->set_lod_camera(60.f, h); // drives the de Boer LOD formula
         renderer.render(scene, w, h);
-        perf.tick(frame, renderer.last_item_count(), dt);
+ 
         app.EndFrame();
 
         ++frame;

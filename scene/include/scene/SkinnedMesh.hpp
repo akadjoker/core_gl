@@ -13,7 +13,7 @@
 // SkinnedMeshInstance points here — five characters with different
 // animations cost one copy of all of this plus five small instances.
 //
-// Loads the user's own .mesh format (MESH/SKEL/SKIN chunks from the
+// Loads .mesh format (MESH/SKEL/SKIN chunks from the
 // exporter) and .anim files for the clips.
 class SkinnedMesh
 {

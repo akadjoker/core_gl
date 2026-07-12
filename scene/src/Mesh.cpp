@@ -116,6 +116,14 @@ void Mesh::compute_tangents()
     }
 }
 
+void Mesh::set_lightmap_uvs(const Vec2* uvs, u32 count)
+{
+    if (!uvs || count == 0 || count != (u32)m_vertices.size()) return;
+    m_uv2_vbo.Allocate(gl::BufferType::ARRAY, uvs, count * sizeof(Vec2),
+                       gl::UsageType::STATIC_DRAW);
+    m_has_lightmap_uvs = true;
+}
+
 void Mesh::upload()
 {
     if (m_vertices.empty() || m_indices.empty()) return;
@@ -133,6 +141,14 @@ void Mesh::upload()
         {gl::VertexAttribType::FLOAT, 2, 0, false}, // uv
     };
     m_vao.AddVertexBuffer(m_vbo, layout, 4, sizeof(MeshVertex));
+
+    // Optional lightmap UVs (BSP meshes only — does NOT change MeshVertex layout)
+    if (m_has_lightmap_uvs)
+    {
+        const gl::VertexAttrib uv2Layout = {gl::VertexAttribType::FLOAT, 2, 0, false};
+        m_vao.AddVertexBuffer(m_uv2_vbo, &uv2Layout, 1, sizeof(Vec2));
+    }
+
     m_vao.SetIndexBuffer(m_ibo, gl::VertexAttribType::UINT);
 
     // auto-generate a single whole-mesh surface when the loader didn't
@@ -162,6 +178,13 @@ void Mesh::upload_dynamic()
         {gl::VertexAttribType::FLOAT, 2, 0, false}, // uv
     };
     m_vao.AddVertexBuffer(m_vbo, layout, 4, sizeof(MeshVertex));
+
+    if (m_has_lightmap_uvs)
+    {
+        const gl::VertexAttrib uv2Layout = {gl::VertexAttribType::FLOAT, 2, 0, false};
+        m_vao.AddVertexBuffer(m_uv2_vbo, &uv2Layout, 1, sizeof(Vec2));
+    }
+
     m_vao.SetIndexBuffer(m_ibo, gl::VertexAttribType::UINT);
 
     if (m_surfaces.empty())
