@@ -22,7 +22,7 @@ int main(int argc, char** argv)
 
     DemoApp app;
     if (!app.Create("coregl - sponza")) return 1;
-    printf("controls: WASD/QE + mouse | LSHIFT fast | F9 stats | P print camera | X toggle shadows | C cascade colors | L light gizmos | F10 gif\n");
+    printf("controls: WASD/QE + mouse | LSHIFT fast | F9 stats | P print camera | X toggle shadows | C cascade colors | L light gizmos | V toggle SSAO | F10 gif\n");
 
     SceneRenderer renderer;
     if (!renderer.init())
@@ -38,6 +38,20 @@ int main(int argc, char** argv)
     // every surface in every cascade every frame. 2 cascades + distance=30
     // is plenty for a small indoor scene and cuts shadow draw calls ~4×.
     renderer.enable_shadows(2, 1024, 30.f);
+    // Post (HDR+tonemap+SSAO) opt-in here: this scene's light intensities
+    // were tuned for direct/no-tonemap display, and the default exposure
+    // crushes unlit corners to black under the filmic curve — a separate
+    // exposure-tuning problem, not an SSAO one (verified: same crush with
+    // SSAO off). Try it with COREGL_POST=1; leave off by default so the
+    // demo's established look doesn't change underneath anyone.
+    if (getenv("COREGL_POST"))
+    {
+        // radius is scene-relative like the shadow distance above: sponza
+        // is scaled 0.01, so the default 0.5 (tuned for ~1-unit scenes)
+        // would blanket the whole room in occlusion.
+        renderer.enable_post(false, true); // godrays off (indoor, no sky shafts), ssao on
+        renderer.set_ssao_params(0.15f, 1.5f);
+    }
     if (getenv("COREGL_STATS")) renderer.set_show_stats(true);
     if (getenv("COREGL_CASCADES")) renderer.set_show_cascades(true);
     if (getenv("COREGL_GIZMOS")) renderer.set_show_light_gizmos(true);
@@ -136,6 +150,13 @@ int main(int argc, char** argv)
     renderer.build_spatial_index(scene);
     renderer.set_use_spatial_index(true);
 
+    if (getenv("COREGL_GIF_AUTOSTART"))
+    {
+        int gw, gh;
+        app.DrawableSize(&gw, &gh);
+        app.gif.Toggle(gw, gh);
+    }
+
     int frame = 0;
     bool running = true;
     while (running)
@@ -169,6 +190,13 @@ int main(int argc, char** argv)
                     on = !on;
                     renderer.set_show_light_gizmos(on);
                     printf("light gizmos: %s\n", on ? "ON" : "off");
+                }
+                if (ev.key.keysym.sym == SDLK_v)
+                {
+                    static bool on = true;
+                    on = !on;
+                    renderer.set_ssao_enabled(on);
+                    printf("SSAO: %s\n", on ? "ON" : "off");
                 }
                 if (ev.key.keysym.sym == SDLK_p)
                 {
@@ -256,6 +284,7 @@ int main(int argc, char** argv)
         if (maxFrames > 0 && frame >= maxFrames) running = false;
     }
 
+    if (getenv("COREGL_GIF_AUTOSTART")) app.gif.Toggle(0, 0);
     printf("frames: %d\n", frame);
     sponzaMesh.release_gpu();
     scene.release_gpu();

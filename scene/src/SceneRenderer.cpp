@@ -16,6 +16,7 @@
 #include "scene/Camera3D.hpp"
 #include "scene/Pixmap.hpp"
 #include "scene/WaterNode.hpp"
+#include "scene/MirrorNode.hpp"
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_renderer.hpp>
 #include <coregl/gl_vertex_array.hpp>
@@ -138,6 +139,9 @@ bool SceneRenderer::init()
     if (!loadStage(m_water, gl::PipelineStage::VERTEX, kWaterVS) ||
         !loadStage(m_water, gl::PipelineStage::FRAGMENT, kWaterFS) || !m_water.Link())
         return false;
+    if (!loadStage(m_mirror, gl::PipelineStage::VERTEX, kMirrorVS) ||
+        !loadStage(m_mirror, gl::PipelineStage::FRAGMENT, kMirrorFS) || !m_mirror.Link())
+        return false;
 
     m_locModel = m_forward.GetLocation("u_model");
     m_locViewProj = m_forward.GetLocation("u_viewProj");
@@ -211,6 +215,15 @@ bool SceneRenderer::init()
     m_water.SetInt("u_reflection", 0);
     m_water.SetInt("u_refraction", 1);
     m_water.SetInt("u_refractionDepth", 2);
+
+    m_locMModel = m_mirror.GetLocation("u_model");
+    m_locMViewProj = m_mirror.GetLocation("u_viewProj");
+    m_locMCameraPos = m_mirror.GetLocation("u_cameraPos");
+    m_locMTint = m_mirror.GetLocation("u_tint");
+    m_locMReflectivity = m_mirror.GetLocation("u_reflectivity");
+    m_locMNormal = m_mirror.GetLocation("u_normal");
+    m_mirror.Bind();
+    m_mirror.SetInt("u_reflection", 0);
 
     if (!m_debug.LoadFromString(gl::PipelineStage::VERTEX, gl::Renderer::QuadShaderSource()) ||
         !loadStage(m_debug, gl::PipelineStage::FRAGMENT, kDebugFS) || !m_debug.Link())
@@ -339,6 +352,7 @@ void SceneRenderer::release()
 {
     m_forward.Release();
     m_water.Release();
+    m_mirror.Release();
     m_oceanShader.Release();
     m_sky.Release();
     m_skyboxShader.Release();
@@ -350,6 +364,8 @@ void SceneRenderer::release()
     m_skinnedDepth.Release();
     m_tonemap.Release();
     m_godray.Release();
+    m_ssao.Release();
+    m_ssaoBlur.Release();
     if (m_statsBatchReady) m_statsBatch.Release();
     m_statsBatchReady = false;
     m_hdrFbo.Release();
@@ -357,6 +373,9 @@ void SceneRenderer::release()
     m_hdrColor.Release();
     m_hdrDepth.Release();
     m_pingColor.Release();
+    m_ssaoFbo.Release();
+    m_ssaoColor.Release();
+    m_ssaoNoise.Release();
     m_postW = m_postH = 0;
     m_post_enabled = false;
     m_debug.Release();
@@ -394,7 +413,7 @@ bool SceneRenderer::enable_shadows(int cascades, int resolution, float distance)
     return true;
 }
 
-bool SceneRenderer::enable_post(bool godrays)
+bool SceneRenderer::enable_post(bool godrays, bool ssao)
 {
     if (!m_ready) return false;
 
@@ -417,8 +436,62 @@ bool SceneRenderer::enable_post(bool godrays)
         m_godray.SetInt("u_shadowMap", 2);
     }
 
+    if (ssao)
+    {
+        if (!m_ssao.LoadFromString(gl::PipelineStage::VERTEX,
+                                   gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_ssao, gl::PipelineStage::FRAGMENT, kSSAO_FS) || !m_ssao.Link())
+            return false;
+        if (!m_ssaoBlur.LoadFromString(gl::PipelineStage::VERTEX,
+                                       gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_ssaoBlur, gl::PipelineStage::FRAGMENT, kSSAOBlurFS) ||
+            !m_ssaoBlur.Link())
+            return false;
+
+        m_ssao.Bind();
+        m_ssao.SetInt("u_depth", 0);
+        m_ssao.SetInt("u_noise", 1);
+        // hemisphere kernel, samples biased toward the center (more detail
+        // close to the surface) — set once, the shader keeps it between binds
+        for (int i = 0; i < 24; ++i)
+        {
+            Vec3 s((float)rand() / (float)RAND_MAX * 2.f - 1.f,
+                   (float)rand() / (float)RAND_MAX * 2.f - 1.f, (float)rand() / (float)RAND_MAX);
+            s = s.normalized() * ((float)rand() / (float)RAND_MAX);
+            float scale = (float)i / 24.f;
+            scale = 0.1f + 0.9f * scale * scale;
+            s = s * scale;
+            char name[16];
+            snprintf(name, sizeof(name), "u_kernel[%d]", i);
+            m_ssao.SetVec3(name, s.x, s.y, s.z);
+        }
+
+        // 8x8 tiling rotation noise — randomizes kernel orientation per
+        // pixel so undersampling shows as noise (blurred away next pass)
+        // instead of banding. 4x4 (16 unique rotations) was too coarse: on
+        // a smooth, gently-curved surface seen at a distance/grazing angle
+        // (a terrain slope, say) the tile repeat became a visible diagonal
+        // banding pattern that survived the matching 4x4 blur.
+        gl::u8 noiseData[8 * 8 * 2];
+        for (int i = 0; i < 64; ++i)
+        {
+            float nx = (float)rand() / (float)RAND_MAX * 2.f - 1.f;
+            float ny = (float)rand() / (float)RAND_MAX * 2.f - 1.f;
+            noiseData[i * 2 + 0] = (gl::u8)((nx * 0.5f + 0.5f) * 255.f);
+            noiseData[i * 2 + 1] = (gl::u8)((ny * 0.5f + 0.5f) * 255.f);
+        }
+        m_ssaoNoise.Load2D(noiseData, 8, 8, gl::TextureFormat::RG8);
+        m_ssaoNoise.SetFilter(gl::TextureFilter::NEAREST, gl::TextureFilter::NEAREST);
+        m_ssaoNoise.SetWrap(gl::TextureWrap::REPEAT, gl::TextureWrap::REPEAT);
+
+        m_ssaoBlur.Bind();
+        m_ssaoBlur.SetInt("u_ssao", 0);
+        m_ssaoBlur.SetInt("u_color", 1);
+    }
+
     m_post_enabled = true;
     m_godrays_enabled = godrays;
+    m_ssao_enabled = ssao;
     return true;
 }
 
@@ -432,6 +505,8 @@ bool SceneRenderer::ensure_post_targets(int w, int h)
     m_pingColor.Release();
     m_hdrFbo.Release();
     m_pingFbo.Release();
+    m_ssaoColor.Release();
+    m_ssaoFbo.Release();
 
     m_hdrColor.Load2D(nullptr, w, h, gl::TextureFormat::RGBA16F);
     m_hdrColor.SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
@@ -448,6 +523,13 @@ bool SceneRenderer::ensure_post_targets(int w, int h)
     m_pingFbo.AttachTexture(m_pingColor, gl::Attachment::COLOR0);
     m_pingFbo.SetDrawBuffers();
     if (!m_pingFbo.IsComplete()) return false;
+
+    m_ssaoColor.Load2D(nullptr, w, h, gl::TextureFormat::R8);
+    m_ssaoColor.SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+    m_ssaoColor.SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+    m_ssaoFbo.AttachTexture(m_ssaoColor, gl::Attachment::COLOR0);
+    m_ssaoFbo.SetDrawBuffers();
+    if (!m_ssaoFbo.IsComplete()) return false;
 
     m_postW = w;
     m_postH = h;
@@ -705,6 +787,14 @@ void SceneRenderer::collect_water(Node* node, std::vector<WaterNode*>& out)
     if (w) out.push_back(w);
     for (Node* child : node->get_children())
         collect_water(child, out);
+}
+
+void SceneRenderer::collect_mirrors(Node* node, std::vector<MirrorNode*>& out)
+{
+    MirrorNode* m = node->as<MirrorNode>();
+    if (m) out.push_back(m);
+    for (Node* child : node->get_children())
+        collect_mirrors(child, out);
 }
 
 void SceneRenderer::collect_particles(Node* node, std::vector<ParticleSystemNode*>& out)
@@ -1320,6 +1410,28 @@ void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, cons
     gl::Renderer::SetBlend(false);
 }
 
+void SceneRenderer::draw_mirror_surfaces(const Mat4& view, const Mat4& proj, const Vec3& cameraPos)
+{
+    Mat4 viewProj = proj * view;
+    m_mirror.Bind();
+    m_mirror.SetMat4(m_locMViewProj, viewProj.x);
+    m_mirror.SetVec3(m_locMCameraPos, cameraPos.x, cameraPos.y, cameraPos.z);
+
+    for (MirrorNode* m : m_mirrors)
+    {
+        if (!m->quad().is_uploaded()) continue;
+
+        m->reflection_tex().Bind(0);
+        m_mirror.SetVec3(m_locMTint, m->tint.x, m->tint.y, m->tint.z);
+        m_mirror.SetFloat(m_locMReflectivity, m->reflectivity);
+        Vec3 n = m->plane_normal();
+        m_mirror.SetVec3(m_locMNormal, n.x, n.y, n.z);
+        m_mirror.SetMat4(m_locMModel, m->get_global_transform().x);
+        m->quad().vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, m->quad().index_count());
+    }
+}
+
 void SceneRenderer::build_spatial_index(Scene& scene)
 {
     m_octree.build(&scene.root());
@@ -1416,6 +1528,51 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
         draw_view(scene, refr);
     }
 
+    m_mirrors.clear();
+    collect_mirrors(&scene.root(), m_mirrors);
+
+    // ── extra views: one reflection per mirror surface, no refraction ──
+    // General plane orientation (unlike WaterNode's horizontal-only trick):
+    // reflect the camera's own position/forward/up across the mirror's
+    // plane and build a normal LookAt view from that — the standard planar
+    // reflection technique. Reflecting a right-handed basis flips
+    // handedness, so triangle winding comes out backwards; refl.mirrored
+    // tells draw_view to flip front-face culling to compensate (see
+    // "a mirrored view reverses triangle winding" below).
+    for (MirrorNode* m : m_mirrors)
+    {
+        if (!m->ensure_gpu(viewport_w / 2, viewport_h / 2)) continue;
+
+        Vec3 planePoint = m->plane_point();
+        Vec3 planeNormal = m->plane_normal();
+
+        auto reflectPoint = [&](const Vec3& p) {
+            return p - planeNormal * (2.f * Vec3::Dot(p - planePoint, planeNormal));
+        };
+        auto reflectDir = [&](const Vec3& v) {
+            return v - planeNormal * (2.f * Vec3::Dot(v, planeNormal));
+        };
+
+        Vec3 reflCamPos = reflectPoint(cameraPos);
+        Vec3 reflCamForward = reflectDir(camera->global_forward());
+        Vec3 reflCamUp = reflectDir(camera->global_up());
+
+        RenderView refl;
+        refl.view = Mat4::LookAt(reflCamPos, reflCamPos + reflCamForward, reflCamUp);
+        refl.proj = proj;
+        refl.target = &m->reflection_fbo();
+        refl.w = m->target_width();
+        refl.h = m->target_height();
+        // keep the side the real camera is on (a small band past the plane
+        // too, so distorted/edge sampling never picks up clipped texels)
+        refl.clip_plane = Vec4(planeNormal.x, planeNormal.y, planeNormal.z,
+                               -Vec3::Dot(planePoint, planeNormal) + 0.05f);
+        refl.use_clip = true;
+        refl.mirrored = true;
+        refl.cam_pos = reflCamPos;
+        draw_view(scene, refl);
+    }
+
     // ── main view (into the HDR target when post-processing is on) ──
     bool post = m_post_enabled && ensure_post_targets(viewport_w, viewport_h);
     RenderView main_view;
@@ -1435,6 +1592,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     // in whatever target the main view used)
     if (!m_waters.empty())
         draw_water_surfaces(view, proj, cameraPos, camera->get_near(), camera->get_far());
+    if (!m_mirrors.empty()) draw_mirror_surfaces(view, proj, cameraPos);
 
     // particles: billboard toward the active camera, then draw over
     // everything opaque/water already in this target
@@ -1466,14 +1624,56 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
         gl::Renderer::SetDepthTest(false);
         gl::Renderer::SetCull(gl::CullMode::NONE);
 
+        // two ping-pong buffers (m_hdrFbo/m_hdrColor, m_pingFbo/m_pingColor)
+        // carry the color through however many of these stages are active —
+        // each stage reads colorSrc and writes into whichever buffer ISN'T
+        // colorSrc's owner, then hands that buffer to the next stage.
+        auto otherTarget = [&](const gl::Texture* src) -> gl::FrameBuffer* {
+            return src == &m_hdrColor ? &m_pingFbo : &m_hdrFbo;
+        };
+        auto otherTexture = [&](const gl::Texture* src) -> const gl::Texture* {
+            return src == &m_hdrColor ? &m_pingColor : &m_hdrColor;
+        };
+
         const gl::Texture* colorSrc = &m_hdrColor;
+
+        if (m_ssao_enabled)
+        {
+            // raw hemisphere AO from the depth buffer into m_ssaoColor
+            m_ssaoFbo.Bind();
+            gl::Renderer::Viewport(0, 0, viewport_w, viewport_h);
+            m_ssao.Bind();
+            m_hdrDepth.Bind(0);
+            m_ssaoNoise.Bind(1);
+            m_ssao.SetMat4("u_proj", proj.x);
+            Mat4 invProj = Mat4::Inverse(proj);
+            m_ssao.SetMat4("u_invProj", invProj.x);
+            m_ssao.SetVec2("u_noiseScale", (float)viewport_w / 8.f, (float)viewport_h / 8.f);
+            m_ssao.SetFloat("u_radius", m_ssaoRadius);
+            m_ssao.SetFloat("u_bias", 0.025f);
+            m_ssao.SetFloat("u_strength", m_ssaoStrength);
+            gl::Renderer::DrawFullscreenTriangle();
+
+            // blur the noise out and multiply straight into the color chain
+            gl::FrameBuffer* dst = otherTarget(colorSrc);
+            dst->Bind();
+            gl::Renderer::Viewport(0, 0, viewport_w, viewport_h);
+            m_ssaoBlur.Bind();
+            m_ssaoColor.Bind(0);
+            const_cast<gl::Texture*>(colorSrc)->Bind(1);
+            m_ssaoBlur.SetVec2("u_texelSize", 1.f / (float)viewport_w, 1.f / (float)viewport_h);
+            gl::Renderer::DrawFullscreenTriangle();
+            colorSrc = otherTexture(colorSrc);
+        }
+
         if (m_godrays_enabled && m_cascades > 0)
         {
             // volumetric sun: march the LAST cascade through the scene depth
-            m_pingFbo.Bind();
+            gl::FrameBuffer* dst = otherTarget(colorSrc);
+            dst->Bind();
             gl::Renderer::Viewport(0, 0, viewport_w, viewport_h);
             m_godray.Bind();
-            m_hdrColor.Bind(0);
+            const_cast<gl::Texture*>(colorSrc)->Bind(0);
             m_hdrDepth.Bind(1);
             m_shadowTex.Bind(2);
             const int last = m_cascades - 1;
@@ -1487,7 +1687,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
             m_godray.SetVec4("u_params", 24.f, 1.4f, 1.10f, 900.f);
             m_godray.SetFloat("u_asymmetry", 0.7f);
             gl::Renderer::DrawFullscreenTriangle();
-            colorSrc = &m_pingColor;
+            colorSrc = otherTexture(colorSrc);
         }
 
         // filmic tonemap to the screen

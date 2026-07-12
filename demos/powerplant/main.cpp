@@ -84,6 +84,9 @@ int main(int argc, char** argv)
     // because the covered distance grew.
     renderer.enable_shadows(4, 1024, extent * 1.3f);
 
+    renderer.enable_post(false, true); // godrays off (indoor, no sky shafts), ssao on
+    renderer.set_ssao_params(0.15f, 1.5f);
+
     std::vector<Material*> materials;
     materials.reserve(matDescs.size());
     for (const MeshLoader::MaterialDesc& md : matDescs)

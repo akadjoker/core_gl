@@ -5,3 +5,4 @@ compile_commands.json
 coregl_capture_*.gif
 build-exporter/
 exporter/bin/
+mesh2h3d/bin/

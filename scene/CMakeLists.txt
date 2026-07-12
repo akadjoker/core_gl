@@ -21,6 +21,7 @@ add_library(scene STATIC
     src/Scene.cpp
     src/SceneRenderer.cpp
     src/WaterNode.cpp
+    src/MirrorNode.cpp
     src/LightNode.cpp
     src/OceanNode.cpp
     src/ParticleSystemNode.cpp

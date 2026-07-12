@@ -15,6 +15,7 @@
 #include <scene/Material.hpp>
 #include <scene/Camera3D.hpp>
 #include <scene/WaterNode.hpp>
+#include <scene/MirrorNode.hpp>
 #include <scene/Pixmap.hpp>
 #include <scene/AssetManager.hpp>
 
@@ -196,12 +197,31 @@ int main(int argc, char** argv)
     water->set_size(kTerrainHalf);
     water->set_position(0.f, 0.f, 0.f);
 
+    // a standing wall mirror, not a floor/puddle — this is the arbitrary-
+    // orientation case: tilt 90 degrees so the reflective face (local +Y)
+    // points along +Z (toward the camera's start position) instead of up.
+    // MirrorNode is its own thing (reflection-only, no waves/refraction),
+    // not a water variant.
+    MirrorNode* mirror = scene.root().create_child<MirrorNode>("mirror");
+    mirror->set_size(6.f);
+    mirror->set_euler(Vec3(1.5707963f, 0.f, 0.f));
+    mirror->set_position(0.f, 10.f, 25.f);
+    mirror->tint = Vec3(0.05f, 0.05f, 0.08f);
+    mirror->reflectivity = 0.15f;
+
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
     camera->set_perspective(55.f, 0.1f, 600.f);
     camera->set_position(0.f, 10.f, 70.f);
 
     scene.set_active_camera(camera);
     scene.ready();
+
+    if (getenv("COREGL_GIF_AUTOSTART"))
+    {
+        int gw, gh;
+        app.DrawableSize(&gw, &gh);
+        app.gif.Toggle(gw, gh);
+    }
 
     // free-fly state drives the camera NODE; angles in radians
     float camYaw = 0.f, camPitch = -0.18f;
@@ -275,6 +295,7 @@ int main(int argc, char** argv)
         if (maxFrames > 0 && frame >= maxFrames) running = false;
     }
 
+    if (getenv("COREGL_GIF_AUTOSTART")) app.gif.Toggle(0, 0);
     printf("frames: %d | items/frame: %d\n", frame, renderer.last_item_count());
 
     scene.release_gpu(); // water targets + meshes, in one call

@@ -246,6 +246,14 @@ int main(int argc, char** argv)
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
 
+    if (getenv("COREGL_NO_SSAO")) renderer.set_ssao_enabled(false);
+    if (getenv("COREGL_GIF_AUTOSTART"))
+    {
+        int gw, gh;
+        app.DrawableSize(&gw, &gh);
+        app.gif.Toggle(gw, gh);
+    }
+
     int frame = 0;
     bool running = true;
     while (running)
@@ -315,6 +323,7 @@ int main(int argc, char** argv)
         if (maxFrames > 0 && frame >= maxFrames) running = false;
     }
 
+    if (getenv("COREGL_GIF_AUTOSTART")) app.gif.Toggle(0, 0);
     printf("frames: %d | items/frame: %d\n", frame, renderer.last_item_count());
 
     scene.release_gpu();

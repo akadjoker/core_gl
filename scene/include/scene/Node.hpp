@@ -23,6 +23,7 @@ enum NodeType : unsigned short
     NT_GRASSSYSTEM,
     NT_WATER,
     NT_OCEAN,
+    NT_MIRROR,
     NT_TERRAIN,
     NT_TILEDTERRAIN,
     NT_INFINITETERRAIN,

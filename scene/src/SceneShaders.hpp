@@ -114,7 +114,7 @@ in vec2 v_uv2;
 out vec4 OutColor;
 
 uniform vec3 u_baseColor;
- 
+
 uniform sampler2D u_diffuse;   // albedo
 uniform sampler2D u_detail;    // lightmap
 uniform vec3 u_cameraPos;
@@ -569,6 +569,52 @@ void main()
 }
 )";
 
+// ── mirror: reflection-only half of the water technique above — no
+// refraction, no distortion, a flat still surface. Fresnel still drives the
+// blend: full reflection at grazing angles, u_tint shows through more
+// looking straight down/on (a real mirror stays ~reflective at all angles;
+// this reads more like glass/polished stone, which is usually what looks
+// good in-game). ──
+static const char* kMirrorVS = R"(
+layout(location = 0) in vec3 a_position;
+uniform mat4 u_model;
+uniform mat4 u_viewProj;
+out vec4 v_clip;
+out vec3 v_world;
+void main()
+{
+    vec4 worldPos = u_model * vec4(a_position, 1.0);
+    v_world = worldPos.xyz;
+    v_clip = u_viewProj * worldPos;
+    gl_Position = v_clip;
+}
+)";
+
+static const char* kMirrorFS = R"(
+in vec4 v_clip;
+in vec3 v_world;
+out vec4 OutColor;
+uniform sampler2D u_reflection;
+uniform vec3 u_cameraPos;
+uniform vec3 u_tint;
+uniform float u_reflectivity;
+uniform vec3 u_normal; // mirror's plane normal, world space — arbitrary orientation
+
+void main()
+{
+    vec2 ndc = (v_clip.xy / v_clip.w) * 0.5 + 0.5;
+    vec2 reflUV = vec2(ndc.x, 1.0 - ndc.y);
+    vec3 refl = texture(u_reflection, reflUV).rgb;
+
+    vec3 viewDir = normalize(u_cameraPos - v_world);
+    float fresnel = pow(clamp(dot(viewDir, u_normal), 0.0, 1.0), 0.7);
+    float mixAmt = clamp(u_reflectivity + (1.0 - u_reflectivity) * (1.0 - fresnel), 0.0, 1.0);
+    vec3 color = mix(refl, u_tint, mixAmt);
+
+    OutColor = vec4(color, 1.0);
+}
+)";
+
 // ── tonemap: HDR buffer -> screen. Filmic curve normalized at a white
 // point of 11.2; highlights roll off smoothly instead of clipping. No
 // gamma term: the lighting above is authored in display space. ──
@@ -589,6 +635,102 @@ void main()
     vec3 hdr = texture(u_hdr, v_uv).rgb * u_exposure;
     vec3 mapped = max(filmic(hdr), vec3(0.0)) / max(filmic(vec3(11.2)), vec3(1e-4));
     OutColor = vec4(mapped, 1.0);
+}
+)";
+
+// ── SSAO: classic hemisphere-kernel ambient occlusion. No G-buffer/prepass —
+// this is a single-pass forward renderer, so normals are reconstructed from
+// the existing HDR depth buffer via screen-space derivatives instead of
+// adding an MRT normal output to every forward/skinned/BSP shader. Some
+// normal error at silhouette edges vs. true per-vertex normals; acceptable
+// for a contact-AO pass. Runs before godrays (AO darkens surface shading,
+// godrays add atmospheric light on top — shouldn't be dimmed by it). ──
+static const char* kSSAO_FS = R"(
+in vec2 v_uv;
+out vec4 OutColor; // R8 target — only .r is read back
+uniform sampler2D u_depth;
+uniform sampler2D u_noise;
+uniform mat4 u_proj;
+uniform mat4 u_invProj;
+uniform vec2 u_noiseScale; // screen size / noise tile size (4x4)
+uniform float u_radius;
+uniform float u_bias;
+uniform float u_strength;
+uniform vec3 u_kernel[24];
+
+vec3 viewPosFromDepth(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 p = u_invProj * clip;
+    return p.xyz / p.w;
+}
+
+void main()
+{
+    float depth = texture(u_depth, v_uv).r;
+    // far plane / sky — no geometry, nothing to occlude. Depth-derived
+    // normals blow up here (huge view-space Z, wild derivatives at the
+    // horizon), which without this guard darkens the sky itself.
+    if (depth >= 0.9999)
+    {
+        OutColor = vec4(1.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    vec3 viewPos = viewPosFromDepth(v_uv, depth);
+
+    // depth-derived normal: screen-space derivatives of the reconstructed
+    // view-space position. Sign convention is easy to get backwards here —
+    // if AO shows up as bright halos instead of dark contact creases,
+    // flip this cross() order.
+    vec3 normal = normalize(cross(dFdy(viewPos), dFdx(viewPos)));
+
+    vec3 randomVec = normalize(vec3(texture(u_noise, v_uv * u_noiseScale).xy * 2.0 - 1.0, 0.0));
+    vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
+    vec3 bitangent = cross(normal, tangent);
+    mat3 TBN = mat3(tangent, bitangent, normal);
+
+    float occlusion = 0.0;
+    for (int i = 0; i < 24; ++i)
+    {
+        vec3 samplePos = viewPos + (TBN * u_kernel[i]) * u_radius;
+
+        vec4 offset = u_proj * vec4(samplePos, 1.0);
+        offset.xyz /= offset.w;
+        offset.xyz = offset.xyz * 0.5 + 0.5;
+
+        float sampleDepth = texture(u_depth, offset.xy).r;
+        float sampleViewZ = viewPosFromDepth(offset.xy, sampleDepth).z;
+
+        float rangeCheck =
+            smoothstep(0.0, 1.0, u_radius / max(abs(viewPos.z - sampleViewZ), 1e-4));
+        occlusion += (sampleViewZ >= samplePos.z + u_bias ? 1.0 : 0.0) * rangeCheck;
+    }
+    occlusion = 1.0 - (occlusion / 24.0);
+    OutColor = vec4(pow(occlusion, u_strength), 0.0, 0.0, 1.0);
+}
+)";
+
+// blur (4x4 box) the raw AO pass and multiply it straight into the current
+// post color — folds "denoise" and "composite" into one pass.
+static const char* kSSAOBlurFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_ssao;
+uniform sampler2D u_color;
+uniform vec2 u_texelSize; // 1/width, 1/height of the ssao texture
+
+void main()
+{
+    // matches the 8x8 noise tile — the blur radius has to cover a full tile
+    // period or the tiling pattern survives as visible banding
+    float result = 0.0;
+    for (int x = -4; x < 4; ++x)
+        for (int y = -4; y < 4; ++y)
+            result += texture(u_ssao, v_uv + vec2(float(x), float(y)) * u_texelSize).r;
+    result /= 64.0;
+
+    vec3 color = texture(u_color, v_uv).rgb;
+    OutColor = vec4(color * result, 1.0);
 }
 )";
 

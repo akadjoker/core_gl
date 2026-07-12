@@ -15,6 +15,7 @@ class FrameBuffer;
 }
 class Camera3D;
 class WaterNode;
+class MirrorNode;
 class LightNode;
 class ParticleSystemNode;
 class DecalSystemNode;
@@ -74,9 +75,21 @@ public:
     // to the screen (strong lights roll off instead of clipping). With
     // godrays on (needs enable_shadows), a volumetric pass marches the last
     // shadow cascade and adds the sun's in-scattered light before the
-    // tonemap. Call after init().
-    bool enable_post(bool godrays = true);
+    // tonemap. With ssao on, a hemisphere-kernel ambient occlusion pass
+    // darkens contact creases (corners, where objects meet the floor) before
+    // godrays — normals are reconstructed from the depth buffer, no G-buffer
+    // needed. Call after init().
+    bool enable_post(bool godrays = true, bool ssao = true);
     void set_exposure(float e) { m_exposure = e; }
+    // debug: toggle SSAO at runtime without reallocating its targets
+    void set_ssao_enabled(bool on) { m_ssao_enabled = on; }
+    // radius: sample radius in view-space units (bigger = softer/wider AO).
+    // strength: pow() exponent on the occlusion factor (bigger = darker).
+    void set_ssao_params(float radius, float strength)
+    {
+        m_ssaoRadius = radius;
+        m_ssaoStrength = strength;
+    }
 
     // ── directional-light shadows (CSM) ──
     // Call once after init(). Splits the camera frustum into `cascades`
@@ -162,8 +175,10 @@ private:
     static void collect_lights(Node* node, std::vector<LightNode*>& out);
     void draw_water_surfaces(const Mat4& view, const Mat4& proj, const Vec3& cameraPos,
                              float camNear, float camFar);
+    void draw_mirror_surfaces(const Mat4& view, const Mat4& proj, const Vec3& cameraPos);
     void draw_debug_views(int viewport_w, int viewport_h);
     static void collect_water(Node* node, std::vector<WaterNode*>& out);
+    static void collect_mirrors(Node* node, std::vector<MirrorNode*>& out);
     void draw_particles(const Mat4& viewProj);
     static void collect_particles(Node* node, std::vector<ParticleSystemNode*>& out);
     static void collect_decals(Node* node, std::vector<DecalSystemNode*>& out);
@@ -253,6 +268,15 @@ private:
     gl::i32 m_locWColorMix = -1;
     gl::i32 m_locWCamPlanes = -1;
 
+    // mirror surface pass (reflection-only, no waves/refraction)
+    gl::Shader m_mirror;
+    gl::i32 m_locMModel = -1;
+    gl::i32 m_locMViewProj = -1;
+    gl::i32 m_locMCameraPos = -1;
+    gl::i32 m_locMTint = -1;
+    gl::i32 m_locMReflectivity = -1;
+    gl::i32 m_locMNormal = -1;
+
     // debug overlay (positioned quads showing the extra views' textures)
     gl::Shader m_debug;
     gl::i32 m_locDRect = -1;
@@ -293,7 +317,7 @@ private:
     gl::Texture* m_skybox = nullptr;  // not owned
     gl::Texture* m_skydome = nullptr; // not owned
 
-    // post chain: HDR scene target -> (godrays) -> tonemap -> screen
+    // post chain: HDR scene target -> (ssao) -> (godrays) -> tonemap -> screen
     bool ensure_post_targets(int w, int h);
     gl::Shader m_tonemap;
     gl::Shader m_godray;
@@ -303,6 +327,15 @@ private:
     bool m_post_enabled = false;
     bool m_godrays_enabled = false;
     float m_exposure = 3.4f;
+
+    // ssao: raw hemisphere-kernel AO into m_ssaoColor, then blurred+composited
+    // straight into the ping-pong color chain (see render())
+    gl::Shader m_ssao, m_ssaoBlur;
+    gl::FrameBuffer m_ssaoFbo;
+    gl::Texture m_ssaoColor, m_ssaoNoise;
+    bool m_ssao_enabled = false;
+    float m_ssaoRadius = 0.5f;
+    float m_ssaoStrength = 0.8f; // softer default — less visible if any tiling residue remains
 
     // ocean surface pass (Gerstner shader );
     // uniforms are set by name — the pass runs once per ocean per frame
@@ -325,7 +358,8 @@ private:
     Vec3 m_clearColor = Vec3(0.5f, 0.65f, 0.8f);
     Vec3 m_lightDir = Vec3(0.5f, -1.0f, 0.3f);
     std::vector<RenderItem> m_items;  // reused across views
-    std::vector<WaterNode*> m_waters; // reused across frames
+    std::vector<WaterNode*> m_waters;   // reused across frames
+    std::vector<MirrorNode*> m_mirrors; // reused across frames
     int m_last_items = 0;
     double m_lastCollectMs = 0.0;
     gl::RenderStats m_frameStats;
