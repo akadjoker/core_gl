@@ -12,6 +12,8 @@ class Texture;
 class Material;
 class Camera3D;
 class Mesh;
+class MeshInstance;
+class SceneOctree;
 
 struct RenderItem
 {
@@ -66,8 +68,17 @@ public:
     // many surfaces still culls piecewise). Null frustum = collect everything.
     void collect(std::vector<RenderItem>& out, const Frustum* frustum = nullptr);
 
+    // Same as above, but when both frustum and octree are non-null the octree
+    // supplies the candidate MeshInstance list instead of walking the whole
+    // Node tree — see SceneOctree.hpp. Falls back to the tree walk otherwise.
+    void collect(std::vector<RenderItem>& out, const Frustum* frustum, const SceneOctree* octree);
+
+    void collect_bsp(std::vector<class BspInstance*>& out);
+
 private:
     void collect_node(Node* node, std::vector<RenderItem>& out, const Frustum* frustum);
+    void collect_instance(MeshInstance* mi, std::vector<RenderItem>& out, const Frustum* frustum);
+    void collect_surface(MeshInstance* mi, u32 surfaceIndex, std::vector<RenderItem>& out);
     void collect_cameras_node(Node* node, std::vector<Camera3D*>& out);
 
     Node* m_root;

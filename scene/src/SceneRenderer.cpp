@@ -11,6 +11,7 @@
 #include "scene/TerrainPagingNode.hpp"
 #include "scene/SkinnedMesh.hpp"
 #include "scene/SkinnedMeshInstance.hpp"
+#include "scene/BspInstance.hpp"
 #include "scene/LensFlareNode.hpp"
 #include "scene/Camera3D.hpp"
 #include "scene/Pixmap.hpp"
@@ -19,13 +20,13 @@
 #include <coregl/gl_renderer.hpp>
 #include <coregl/gl_vertex_array.hpp>
 #include <cstdio>
+#include <cstdlib>
 
 #include "SceneShaders.hpp"
 
 // ── CSM cascade fitting ──────────────────────────────────────────────────
 
 // split distances: log/uniform blend (finer slices near the camera).
-// Ported verbatim from the user's old engine (tmp/core/src/ShadowCascades.cpp),
 // lambda=0.5 fixed (was a runtime knob there; no caller ever changed it).
 static void csmSplits(float nearClip, float farClip, float* splits, int numCascades)
 {
@@ -48,9 +49,7 @@ static float casterDistanceForCascade(int c)
 
     return kMinCasterDistance[Clamp(c, 0, count - 1)];
 }
-// One cascade's lightProjection * lightView. Ported verbatim from the
-// user's old engine (ShadowCascades::update) — this Sponza scene is what it
-// was proven against; do not re-derive this math.
+ 
 // 1. this slice's 8 frustum corners, straight from tan(fov/2) + camera
 //    world transform (no projection-matrix inverse needed)
 // 2. bounding SPHERE around them: the radius depends only on the slice's
@@ -133,6 +132,9 @@ bool SceneRenderer::init()
     if (!loadStage(m_forward, gl::PipelineStage::VERTEX, kFwdVS) ||
         !loadStage(m_forward, gl::PipelineStage::FRAGMENT, kFwdFS) || !m_forward.Link())
         return false;
+    if (!loadStage(m_bsp, gl::PipelineStage::VERTEX, kBSP_VS) ||
+        !loadStage(m_bsp, gl::PipelineStage::FRAGMENT, kBSP_FS) || !m_bsp.Link())
+        return false;
     if (!loadStage(m_water, gl::PipelineStage::VERTEX, kWaterVS) ||
         !loadStage(m_water, gl::PipelineStage::FRAGMENT, kWaterFS) || !m_water.Link())
         return false;
@@ -173,6 +175,18 @@ bool SceneRenderer::init()
     m_forward.SetInt(m_locCascadeCount, 0);
     m_forward.SetInt(m_locPointCount, 0);
     m_forward.SetInt(m_locSpotCount, 0);
+
+    // BSP lightmapped shader uniforms (reuse texture slots 0 + 6)
+    m_locBspModel     = m_bsp.GetLocation("u_model");
+    m_locBspViewProj  = m_bsp.GetLocation("u_viewProj");
+    m_locBspView      = m_bsp.GetLocation("u_view");
+    m_locBspColor     = m_bsp.GetLocation("u_baseColor");
+    m_locBspLightDir  = m_bsp.GetLocation("u_lightDir");
+    m_locBspClipPlane = m_bsp.GetLocation("u_clipPlane");
+    m_locBspCameraPos = m_bsp.GetLocation("u_cameraPos");
+    m_bsp.Bind();
+    m_bsp.SetInt("u_diffuse", 0);
+    m_bsp.SetInt("u_detail", 6);
 
     if (!loadStage(m_pointDepth, gl::PipelineStage::VERTEX, kPointDepthVS) ||
         !loadStage(m_pointDepth, gl::PipelineStage::FRAGMENT, kPointDepthFS) ||
@@ -470,7 +484,7 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
         Frustum cascadeFrustum;
         cascadeFrustum.build(Mat4::Identity(), m_cascadeMat[c]);
         m_shadow_items.clear();
-        scene.collect(m_shadow_items, &cascadeFrustum);
+        scene.collect(m_shadow_items, &cascadeFrustum, (m_octree_built && m_octree_enabled) ? &m_octree : nullptr);
 
         m_shadowFbo.AttachTextureLayer(m_shadowTex, gl::Attachment::DEPTH, c);
         gl::Renderer::Clear(false, true);
@@ -581,7 +595,7 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
                 Frustum faceFrustum;
                 faceFrustum.build(viewFace, proj);
                 m_shadow_items.clear();
-                scene.collect(m_shadow_items, &faceFrustum);
+                scene.collect(m_shadow_items, &faceFrustum, (m_octree_built && m_octree_enabled) ? &m_octree : nullptr);
 
                 for (const RenderItem& item : m_shadow_items)
                 {
@@ -616,7 +630,7 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
             Frustum spotFrustum;
             spotFrustum.build(viewSpot, projSpot);
             m_shadow_items.clear();
-            scene.collect(m_shadow_items, &spotFrustum);
+            scene.collect(m_shadow_items, &spotFrustum, (m_octree_built && m_octree_enabled) ? &m_octree : nullptr);
 
             m_depth.Bind();
             for (const RenderItem& item : m_shadow_items)
@@ -1053,8 +1067,13 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     Frustum frustum;
     frustum.build(v.view, v.proj);
     m_items.clear();
-    scene.collect(m_items, &frustum);
-    m_last_items = (int)m_items.size();
+    auto collectT0 = std::chrono::steady_clock::now();
+    scene.collect(m_items, &frustum, (m_octree_built && m_octree_enabled) ? &m_octree : nullptr);
+    auto collectT1 = std::chrono::steady_clock::now();
+    m_lastCollectMs = std::chrono::duration<double, std::milli>(collectT1 - collectT0).count();
+    m_bspInstances.clear();
+    scene.collect_bsp(m_bspInstances);
+    m_last_items = (int)m_items.size() + (int)m_bspInstances.size();
 
     if (v.target)
         v.target->Bind();
@@ -1081,6 +1100,16 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
 
     set_light_uniforms();
 
+    // BSP per-view uniforms (before the forward pass binds its own shader)
+    m_bsp.Bind();
+    m_bsp.SetMat4(m_locBspViewProj, vp.x);
+    m_bsp.SetMat4(m_locBspView, v.view.x);
+    m_bsp.SetVec3(m_locBspLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
+    m_bsp.SetVec3(m_locBspCameraPos, v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
+    m_bsp.SetVec4(m_locBspClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
+                  v.clip_plane.w);
+
+    m_forward.Bind();
     m_forward.SetInt(m_locCascadeCount, m_shadows_active ? m_cascades : 0);
     if (m_shadows_active && m_cascades > 0)
     {
@@ -1094,23 +1123,67 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
         }
     }
 
+    const Material* prevMat = nullptr;
     for (const RenderItem& item : m_items)
     {
         const Material* mat = item.material;
-        Vec3 color = mat ? mat->base_color : Vec3(0.8f, 0.5f, 0.35f);
-        gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
-        diffuse->Bind(0);
-        gl::Texture* detail = (mat && mat->detail) ? mat->detail : &m_gray;
-        detail->Bind(6);
-        m_forward.SetFloat("u_detailScale", mat ? mat->detail_scale : 1.f);
-        gl::Renderer::SetCull((mat && mat->double_sided) ? gl::CullMode::NONE : gl::CullMode::BACK);
-        m_forward.SetFloat(m_locUnlit, (mat && mat->unlit) ? 1.f : 0.f);
-        m_forward.SetVec2(m_locSpecular, mat ? mat->specular : 0.f, mat ? mat->shininess : 32.f);
-        m_forward.SetVec3(m_locColor, color.x, color.y, color.z);
+        if (mat != prevMat)
+        {
+            Vec3 color = mat ? mat->base_color : Vec3(0.8f, 0.5f, 0.35f);
+            gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
+            diffuse->Bind(0);
+            gl::Texture* detail = (mat && mat->detail) ? mat->detail : &m_gray;
+            detail->Bind(6);
+            m_forward.SetFloat("u_detailScale", mat ? mat->detail_scale : 1.f);
+            gl::Renderer::SetCull((mat && mat->double_sided) ? gl::CullMode::NONE : gl::CullMode::BACK);
+            m_forward.SetFloat(m_locUnlit, (mat && mat->unlit) ? 1.f : 0.f);
+            m_forward.SetVec2(m_locSpecular, mat ? mat->specular : 0.f, mat ? mat->shininess : 32.f);
+            m_forward.SetVec3(m_locColor, color.x, color.y, color.z);
+            prevMat = mat;
+        }
         m_forward.SetMat4(m_locModel, item.world.x);
         item.vao->Bind();
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
                                   item.first_index);
+    }
+
+    // ── BSP lightmapped pass ──
+    if (!m_bspInstances.empty())
+    {
+        m_bsp.Bind();
+        prevMat = nullptr;
+        gl::Renderer::SetDepthTest(true);
+        gl::Renderer::SetDepthWrite(true);
+        for (BspInstance* bsp : m_bspInstances)
+        {
+            Mesh* mesh = bsp->get_mesh();
+            if (!mesh) continue;
+            const Mat4& world = bsp->get_world_matrix();
+            const std::vector<Material*>& mats = bsp->get_materials();
+
+            for (u32 s = 0; s < (u32)mesh->surfaces().size(); ++s)
+            {
+                const Surface& surf = mesh->surfaces()[s];
+                const Material* mat = (surf.material_slot >= 0 && surf.material_slot < (int)mats.size())
+                                          ? mats[surf.material_slot]
+                                          : (!mats.empty() ? mats[0] : nullptr);
+                if (mat != prevMat)
+                {
+                    Vec3 color = mat ? mat->base_color : Vec3(1.f, 1.f, 1.f);
+                    gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
+                    diffuse->Bind(0);
+                    gl::Texture* detail = (mat && mat->detail) ? mat->detail : &m_white;
+                    detail->Bind(6);
+                    gl::Renderer::SetCull((mat && mat->double_sided) ? gl::CullMode::NONE : gl::CullMode::BACK);
+                    m_bsp.SetVec3(m_locBspColor, color.x, color.y, color.z);
+                    prevMat = mat;
+                }
+                m_bsp.SetMat4(m_locBspModel, world.x);
+                mesh->vao().Bind();
+                gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, surf.index_count,
+                                          surf.first_index);
+            }
+        }
     }
 
     // splat-mode paged terrain: opaque, in-view like any item (reflections
@@ -1247,16 +1320,39 @@ void SceneRenderer::draw_water_surfaces(const Mat4& view, const Mat4& proj, cons
     gl::Renderer::SetBlend(false);
 }
 
+void SceneRenderer::build_spatial_index(Scene& scene)
+{
+    m_octree.build(&scene.root());
+    m_octree_built = true;
+    if (getenv("COREGL_OCTREE_DIAG"))
+    {
+        std::vector<const SceneOctreeNode*> nodes;
+        collect_octree_bounds(m_octree.root(), nodes);
+        int maxDepth = 0, totalEntries = 0;
+        for (const SceneOctreeNode* n : nodes)
+        {
+            if (n->depth > maxDepth) maxDepth = n->depth;
+            totalEntries += (int)n->entries.size();
+        }
+        printf("octree diag: %d occupied nodes, max depth %d, %d entries indexed\n",
+               (int)nodes.size(), maxDepth, totalEntries);
+    }
+}
+
 void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
 {
     if (!m_ready) return;
     Camera3D* camera = scene.get_active_camera();
+
     if (!camera) return; // nothing to see with
 
     camera->set_viewport_size(viewport_w, viewport_h);
     Mat4 proj = camera->get_projection_matrix();
     Mat4 view = camera->get_view_matrix();
     Vec3 cameraPos = camera->get_global_position();
+
+    // reset GL stats each frame so the overlay shows per-frame counts
+    gl::Renderer::ResetStats();
 
     // collected before the shadow pass: splat pages cast shadows too
     m_pagedTerrains.clear();
@@ -1407,6 +1503,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     if (m_debug_views) draw_debug_views(viewport_w, viewport_h);
 
     if (m_show_light_gizmos) draw_light_gizmos(proj * view);
+    if (m_show_octree_debug) draw_octree_debug(proj * view);
 
     // snapshot BEFORE the stats panel draws, so the panel reports the
     // scene's cost, not its own
@@ -1516,6 +1613,59 @@ void SceneRenderer::draw_light_gizmos(const Mat4& viewProj)
 
     m_gizmoBatch.Render();
     gl::Renderer::SetDepthWrite(true);
+}
+
+void SceneRenderer::collect_octree_bounds(const SceneOctreeNode* node,
+                                          std::vector<const SceneOctreeNode*>& out)
+{
+    if (!node) return;
+    if (!node->entries.empty()) out.push_back(node);
+    for (int i = 0; i < 8; ++i)
+        collect_octree_bounds(node->children[i], out);
+}
+
+// wireframe box per SceneOctree node holding at least one instance — depth
+// tints the color (root = red, deeper = greener) so the split is readable
+void SceneRenderer::draw_octree_debug(const Mat4& viewProj)
+{
+    if (m_octree.empty()) return;
+    if (!m_gizmoBatchReady)
+    {
+        if (!m_gizmoBatch.Init()) return;
+        m_gizmoBatchReady = true;
+    }
+
+    std::vector<const SceneOctreeNode*> nodes;
+    collect_octree_bounds(m_octree.root(), nodes);
+    if (nodes.empty()) return;
+
+    // depth test OFF: these boxes enclose clusters of solid geometry (that's
+    // the whole point of looking at them) — with depth test on, a dense
+    // scene (octree_stress) buries every box inside the opaque objects it
+    // surrounds and you see nothing
+ //   gl::Renderer::SetDepthTest(false);
+ //   gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(false);
+
+    m_gizmoBatch.SetProjection(viewProj.x);
+    m_gizmoBatch.LoadIdentity();
+    m_gizmoBatch.SetMode(gl::RenderPrimitive::LINES);
+
+    for (const SceneOctreeNode* node : nodes)
+    {
+        float t = (float)node->depth / 6.f;
+        if (t > 1.f) t = 1.f;
+        gl::u8 r = (gl::u8)((1.f - t) * 255.f), g = (gl::u8)(t * 255.f);
+        Vec3 c = node->bounds.center();
+        Vec3 sz = node->bounds.max - node->bounds.min;
+        m_gizmoBatch.SetColor(r, g, 60, 220);
+        m_gizmoBatch.CubeWire(c.x, c.y, c.z, sz.x, sz.y, sz.z);
+    }
+
+    m_gizmoBatch.Render();
+    // gl::Renderer::SetDepthTest(true);
+    // gl::Renderer::SetDepthWrite(true);
 }
 
 void SceneRenderer::draw_debug_views(int viewport_w, int viewport_h)

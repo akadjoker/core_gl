@@ -2,6 +2,7 @@
 
 #include "scene/Math.hpp"
 #include "scene/Scene.hpp"
+#include "scene/SceneOctree.hpp"
 #include <coregl/gl_batch.hpp>
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_shader.hpp>
@@ -45,7 +46,7 @@ public:
     void set_clear_color(float r, float g, float b);
     void set_light_dir(const Vec3& dir); // direction the light travels
 
-    // ── sky (Ogre-style: three kinds, all drawn in every view so water
+    // ── sky : three kinds, all drawn in every view so water
     // reflections show them too). Lighting is independent: set_light_dir
     // keeps driving sun light/shadows/fog whatever the background is.
     // procedural: gradient + sun disc derived from the light direction —
@@ -92,6 +93,9 @@ public:
     // you can see where a light actually sits instead of guessing from the
     // lit result. Drawn last, on top, in every view.
     void set_show_light_gizmos(bool on) { m_show_light_gizmos = on; }
+    // debug: wireframe box per SceneOctree node (leaf + internal) that
+    // currently holds at least one instance — visualize the culling split
+    void set_show_octree_debug(bool on) { m_show_octree_debug = on; }
 
     // one full frame: extra views (water reflection/refraction), then the
     // main view from the scene's active camera. viewport_w/h set the camera
@@ -103,6 +107,20 @@ public:
     void set_debug_views(bool on) { m_debug_views = on; }
 
     int last_item_count() const { return m_last_items; }
+    // wall time of the main view's scene.collect() call alone (ms), isolated
+    // from GL draw submission — for A/B'ing the spatial index's real CPU cost
+    double last_collect_ms() const { return m_lastCollectMs; }
+
+    // Builds (or rebuilds) the object-level spatial index used to accelerate
+    // culling in every collect() call this renderer makes (main view + all
+    // shadow passes). Static geometry only — call again after adding/moving/
+    // removing MeshInstances. Call after the scene is fully populated.
+    void build_spatial_index(Scene& scene);
+    bool has_spatial_index() const { return m_octree_built; }
+    // A/B toggle: use the built index (if any) or fall back to the plain
+    // Node-tree walk, without rebuilding — for perf comparisons.
+    void set_use_spatial_index(bool on) { m_octree_enabled = on; }
+    bool use_spatial_index() const { return m_octree_enabled; }
 
     // snapshot of the core RenderStats taken at the end of render() — the
     // whole frame's draw calls/tris/binds/state changes, readable by game
@@ -117,6 +135,8 @@ public:
 private:
     void draw_stats(int viewport_w, int viewport_h);
     void draw_light_gizmos(const Mat4& viewProj);
+    void draw_octree_debug(const Mat4& viewProj);
+    static void collect_octree_bounds(const SceneOctreeNode* node, std::vector<const SceneOctreeNode*>& out);
     // one rendering of the scene into one target
     struct RenderView
     {
@@ -176,6 +196,16 @@ private:
     gl::i32 m_locCascadeCount = -1;
     gl::i32 m_locShowCascades = -1;
     gl::i32 m_locShadowSize = -1;
+
+    // BSP lightmapped pass (uv2, no tangents, no shadows)
+    gl::Shader m_bsp;
+    gl::i32 m_locBspModel = -1;
+    gl::i32 m_locBspViewProj = -1;
+    gl::i32 m_locBspView = -1;
+    gl::i32 m_locBspColor = -1;
+    gl::i32 m_locBspLightDir = -1;
+    gl::i32 m_locBspClipPlane = -1;
+    gl::i32 m_locBspCameraPos = -1;
 
     // shadow pass (CSM): depth-only views into a depth array, one layer per
     // cascade, consumed by the forward shader
@@ -252,6 +282,9 @@ private:
     gl::Shader m_skinnedDepth; // characters into the CSM cascades
     gl::i32 m_locSkDepthMVP = -1, m_locSkDepthBones0 = -1;
 
+    // BSP lightmapped instances (collected separately, own shader)
+    std::vector<class BspInstance*> m_bspInstances;
+
     // sky passes: procedural gradient, cubemap skybox, equirect skydome
     gl::Shader m_sky;
     gl::Shader m_skyboxShader;
@@ -271,7 +304,7 @@ private:
     bool m_godrays_enabled = false;
     float m_exposure = 3.4f;
 
-    // ocean surface pass (Gerstner shader from the reference assets);
+    // ocean surface pass (Gerstner shader );
     // uniforms are set by name — the pass runs once per ocean per frame
     gl::Shader m_oceanShader;
     bool m_ocean_ready = false;
@@ -280,7 +313,7 @@ private:
     gl::Texture m_gray;     // 1x1 neutral detail map
     std::vector<class LensFlareNode*> m_lensflares; // reused across frames
 
-    // terrain shader (texture splatting, Ogre-style)
+    // terrain shader (texture splatting)
     gl::Shader m_terrainShader;
     gl::i32 m_locTModel = -1;
     gl::i32 m_locTViewProj = -1;
@@ -294,15 +327,20 @@ private:
     std::vector<RenderItem> m_items;  // reused across views
     std::vector<WaterNode*> m_waters; // reused across frames
     int m_last_items = 0;
+    double m_lastCollectMs = 0.0;
     gl::RenderStats m_frameStats;
     gl::Batch m_statsBatch; // lazy-init 2D batch for the stats panel
     bool m_statsBatchReady = false;
     gl::Batch m_gizmoBatch; // lazy-init 3D batch for light gizmos
     bool m_gizmoBatchReady = false;
     bool m_show_light_gizmos = false;
+    bool m_show_octree_debug = false;
     bool m_show_stats = false;
     gl::u64 m_lastFrameNs = 0; // render()-to-render() clock for the fps line
     float m_smoothMs = 0.f;    // exponentially smoothed frame time
     bool m_ready = false;
+    SceneOctree m_octree;
+    bool m_octree_built = false;
+    bool m_octree_enabled = true;
     bool m_debug_views = false;
 };

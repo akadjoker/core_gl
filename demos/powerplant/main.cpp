@@ -215,15 +215,15 @@ int main(int argc, char** argv)
         fly.apply(camera, dt);
 
         // one light flies a horizontal circle + bob around its start point
-        static float orbitTime = 0.f;
-        if (light)
-        {
-            orbitTime += dt * 0.8f;
-            light->set_position(orbitCenter.x + cosf(orbitTime) * orbitRadius,
-                                     orbitCenter.y + sinf(orbitTime * 1.7f) * orbitRadius * 0.4f,
-                                     orbitCenter.z + sinf(orbitTime) * orbitRadius);
-        }
-        headlamp->set_position(camera->get_position());
+        // static float orbitTime = 0.f;
+        // if (light)
+        // {
+        //     orbitTime += dt * 0.8f;
+        //     light->set_position(orbitCenter.x + cosf(orbitTime) * orbitRadius,
+        //                              orbitCenter.y + sinf(orbitTime * 1.7f) * orbitRadius * 0.4f,
+        //                              orbitCenter.z + sinf(orbitTime) * orbitRadius);
+        // }
+        // headlamp->set_position(camera->get_position());
 
         scene.update(dt);
 

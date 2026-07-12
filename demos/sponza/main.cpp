@@ -133,6 +133,9 @@ int main(int argc, char** argv)
 
 
 
+    renderer.build_spatial_index(scene);
+    renderer.set_use_spatial_index(true);
+
     int frame = 0;
     bool running = true;
     while (running)
@@ -178,6 +181,19 @@ int main(int argc, char** argv)
                     int gw, gh;
                     app.DrawableSize(&gw, &gh);
                     app.gif.Toggle(gw, gh);
+                }
+                if (ev.key.keysym.sym == SDLK_g)
+                {
+                    static bool on = false;
+                    on = !on;
+                    renderer.set_show_octree_debug(on);
+                    printf("octree debug boxes: %s\n", on ? "ON" : "off");
+                }
+                 if (ev.key.keysym.sym == SDLK_o)
+                {
+                    bool on = !renderer.use_spatial_index();
+                    renderer.set_use_spatial_index(on);
+                    printf("octree culling: %s\n", on ? "ON" : "off (naive tree walk)");
                 }
             }
             fly.handle(ev);
@@ -231,6 +247,9 @@ int main(int argc, char** argv)
         int w, h;
         app.DrawableSize(&w, &h);
         renderer.render(scene, w, h);
+        if (getenv("COREGL_OCTREE_DIAG") && frame % 60 == 0)
+            printf("DEBUG collect %.4fms | items: %d | octree: %s\n", renderer.last_collect_ms(),
+                   renderer.last_item_count(), renderer.use_spatial_index() ? "on" : "off");
         app.EndFrame();
 
         ++frame;
