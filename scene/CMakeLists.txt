@@ -60,6 +60,7 @@ add_library(scene STATIC
     src/VolumeSource.cpp
     src/VolumeNoise.cpp
     src/VolumeCSGSource.cpp
+    src/VolumeGridSource.cpp
     src/VolumeMesher.cpp
     src/stb_impl.cpp
     src/cgltf_impl.cpp
