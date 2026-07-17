@@ -43,29 +43,47 @@ int main(int argc, char** argv)
     Scene scene;
     assets::AssetManager& assets = assets::AssetManager::instance();
 
-    // ── the SHARED resource: one mesh + skeleton + clips for every sinbad ──
-    SkinnedMesh sinbadRes;
-    if (!sinbadRes.load("assets/models/sinbad/sinbad.h3d"))
+ 
+    SkinnedMesh* sinbadRes = assets.loadSkinnedMesh("sinbad", "assets/models/sinbad/sinbad.h3d");
+    if (!sinbadRes)
     {
         fprintf(stderr, "sinbad load failed\n");
         return 1;
     }
+
+    assets.set_flip_on_lood(true); 
+
+    gl::Texture* bodyTex = assets.loadTexture("sinbad_body", "assets/models/sinbad/sinbad_body.tga");
+    gl::Texture* clothTex = assets.loadTexture("sinbad_clothes", "assets/models/sinbad/sinbad_clothes.tga");
+    gl::Texture* swordTex = assets.loadTexture("sword", "assets/models/sinbad/sinbad_sword.tga");
+
+
+    sinbadRes->get_material(0)->diffuse = bodyTex;
+    sinbadRes->get_material(1)->diffuse = bodyTex;
+    sinbadRes->get_material(2)->diffuse = bodyTex;
+    sinbadRes->get_material(3)->diffuse = bodyTex;
+    sinbadRes->get_material(4)->diffuse = swordTex;//espada
+    sinbadRes->get_material(5)->diffuse = clothTex;//picvois
+    sinbadRes->get_material(6)->diffuse = clothTex;
+ 
+
+
+    // gl::Log::Info("SkinnedMesh: '%s' — %u verts, %u indices, %d bones, %zu materials", "assets/models/sinbad/sinbad.h3d",
+    //               (gl::u32)sinbadRes->mesh().vertex_count(), (gl::u32)sinbadRes->mesh().index_count(),
+    //               sinbadRes->skeleton().bone_count(), sinbadRes->material_count());
+
     const char* anims[] = {"IdleBase", "IdleTop",  "RunBase",     "RunTop",
                            "Dance",    "DrawSwords", "HandsRelaxed"};
     for (const char* a : anims)
     {
         char path[128];
         snprintf(path, sizeof(path), "assets/models/sinbad/sinbad_%s.anim", a);
-        sinbadRes.load_animations(path);
+        assets.loadAnimation("sinbad", path);
     }
     // bone list (handy for picking attachment points)
-    for (int i = 0; i < sinbadRes.skeleton().bone_count() && getenv("COREGL_BONES"); ++i)
-        printf("bone %2d: %s (parent %d)\n", i, sinbadRes.skeleton().bone(i).name.c_str(),
-               sinbadRes.skeleton().bone(i).parent);
-
-    Material* bodyMat = scene.create_material();
-    bodyMat->diffuse = assets.loadTexture("sinbad_body", "assets/models/sinbad/sinbad_body.tga");
-    bodyMat->specular = 0.35f;
+    // for (int i = 0; i < sinbadRes->skeleton().bone_count();++i)
+    //     printf("bone %2d: %s (parent %d)\n", i, sinbadRes->skeleton().bone(i).name.c_str(),
+    //            sinbadRes->skeleton().bone(i).parent);
 
     // ground
     Mesh* groundMesh = scene.create_mesh();
@@ -90,13 +108,15 @@ int main(int argc, char** argv)
     ground->set_mesh(groundMesh);
     ground->set_material(groundMat);
 
+ 
+
     // ── three characters, one resource — each with its own animation ──
     SkinnedMeshInstance* sinbad[3];
     for (int i = 0; i < 3; ++i)
     {
         sinbad[i] = scene.root().create_child<SkinnedMeshInstance>("sinbad");
-        sinbad[i]->set_mesh(&sinbadRes);
-        sinbad[i]->set_material(bodyMat);
+        sinbad[i]->set_mesh(sinbadRes);
+
         sinbad[i]->set_position((float)(i - 1) * 8.f, 5.f, 0.f);
     }
     sinbad[0]->animation().layer(0).play("IdleBase");
@@ -106,17 +126,15 @@ int main(int argc, char** argv)
     sinbad[2]->animation().layer(0).play("Dance");
 
     // ── sword on the right hand of the middle sinbad (bone attachment) ──
-    Mesh swordMesh;
-    Material* swordMat = scene.create_material();
-    swordMat->diffuse = assets.loadTexture("sword", "assets/models/sinbad/sinbad_sword.tga");
-    if (MeshLoader::load("assets/models/sinbad/sword.h3d", swordMesh))
+    Mesh* swordMesh = assets.loadMesh("sinbad_sword", "assets/models/sinbad/sword.h3d");
+    if (swordMesh)
     {
-        swordMesh.upload();
+        swordMesh->set_material_texture(0, swordTex);
         BoneAttachment* hand = sinbad[1]->create_child<BoneAttachment>("hand");
         if (!hand->attach(sinbad[1], "Handle.R")) hand->attach(sinbad[1], "Hand.R");
         MeshInstance* sword = hand->create_child<MeshInstance>("sword");
-        sword->set_mesh(&swordMesh);
-        sword->set_material(swordMat);
+        sword->set_mesh(swordMesh);
+ 
     }
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
@@ -131,7 +149,13 @@ int main(int argc, char** argv)
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
 
- 
+    if (getenv("COREGL_GIF_AUTOSTART"))
+    {
+        int gw, gh;
+        app.DrawableSize(&gw, &gh);
+        app.gif.Toggle(gw, gh);
+    }
+
     int frame = 0;
     bool running = true;
     while (running)
@@ -193,10 +217,9 @@ int main(int argc, char** argv)
         if (maxFrames > 0 && frame >= maxFrames) running = false;
     }
 
-    printf("frames: %d | bones: %d | clips: %u\n", frame, sinbadRes.skeleton().bone_count(),
-           (gl::u32)sinbadRes.clips().size());
-    sinbadRes.release_gpu();
-    swordMesh.release_gpu();
+    if (getenv("COREGL_GIF_AUTOSTART")) app.gif.Toggle(0, 0);
+    printf("frames: %d | bones: %d | clips: %u\n", frame, sinbadRes->skeleton().bone_count(),
+           (gl::u32)sinbadRes->clips().size());
     scene.release_gpu();
     assets.release();
     renderer.release();

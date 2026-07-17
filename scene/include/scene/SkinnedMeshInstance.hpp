@@ -24,8 +24,30 @@ public:
 
     void set_mesh(SkinnedMesh* shared); // not owned; binds the player
     SkinnedMesh* get_mesh() const { return m_shared; }
-    void set_material(Material* m) { m_material = m; }
-    Material* get_material() const { return m_material; }
+
+    // single material for the whole character (legacy path — equivalent
+    // to set_materials({m}))
+    void set_material(Material* m) { m_materials.assign(1, m); }
+    Material* get_material(int index) const
+    {
+        return (index < 0 || index >= (int)m_materials.size()) ? nullptr : m_materials[index];
+    }
+    int material_count() const { return (int)m_materials.size(); }
+
+    // appends an empty slot and returns it for the caller to fill in place
+    Material* add_material()
+    {
+        m_materials.push_back(nullptr);
+        return m_materials.back();
+    }
+
+    // per-surface materials, same convention as MeshInstance: index i
+    // matches Surface::material_slot == i on the shared mesh (see
+    // SkinnedMesh::material_infos() for what the exporter recorded per
+    // slot). A surface whose slot is out of range falls back to
+    // materials[0], then to a flat default if the vector is empty.
+    void set_materials(const std::vector<Material*>& m) { m_materials = m; }
+    const std::vector<Material*>& get_materials() const { return m_materials; }
 
     AnimationPlayer& animation() { return m_player; }
 
@@ -42,7 +64,7 @@ public:
 
 private:
     SkinnedMesh* m_shared = nullptr;
-    Material* m_material = nullptr;
+    std::vector<Material*> m_materials;
     AnimationPlayer m_player;
     std::vector<LocalPose> m_locals;
     std::vector<Mat4> m_globals;

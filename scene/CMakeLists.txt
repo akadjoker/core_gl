@@ -39,7 +39,30 @@ add_library(scene STATIC
     src/Color.cpp
     src/Pixmap.cpp
     src/BSPLoader.cpp
+    src/MorphAnimation.cpp
+    src/MD2Loader.cpp
+    src/MD3Loader.cpp
+    src/MorphMeshInstance.cpp
+    src/TagAttachment.cpp
+    src/GLTFLoader.cpp
+    src/B3DLoader.cpp
+    src/IQMLoader.cpp
+    src/Input.cpp
+    src/Behavior.cpp
+    src/FreeFlyBehavior.cpp
+    src/MayaBehavior.cpp
+    src/OrbitBehavior.cpp
+    src/OscillateBehavior.cpp
+    src/RotatorBehavior.cpp
+    src/FollowBehavior.cpp
+    src/CharacterBehavior.cpp
+    src/CSG.cpp
+    src/VolumeSource.cpp
+    src/VolumeNoise.cpp
+    src/VolumeCSGSource.cpp
+    src/VolumeMesher.cpp
     src/stb_impl.cpp
+    src/cgltf_impl.cpp
 )
 
 target_include_directories(scene
@@ -49,6 +72,12 @@ target_include_directories(scene
 
 # the render-facing parts of the scene layer draw through coregl's public API
 target_link_libraries(scene PUBLIC coregl)
+
+# Input.hpp (Behavior nodes' input source) polls SDL2 state directly; every
+# consumer of scene already links SDL2 for its own window/event loop (see
+# demos/CMakeLists.txt), so this is just making that dependency explicit.
+find_package(SDL2 REQUIRED)
+target_link_libraries(scene PUBLIC SDL2::SDL2)
 
 if(MSVC)
     target_compile_options(scene PRIVATE /W4)

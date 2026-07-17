@@ -2,6 +2,7 @@
 
 #include "scene/Node3D.hpp"
 #include <coregl/gl_buffer.hpp>
+#include <coregl/gl_renderer.hpp> // gl::Query
 #include <coregl/gl_shader.hpp>
 #include <coregl/gl_texture.hpp>
 #include <coregl/gl_vertex_array.hpp>
@@ -70,6 +71,21 @@ private:
     std::vector<FVert> m_scratchVerts;
     std::vector<u32>   m_scratchIdx;
 
+    // hardware occlusion query: is anything already in the depth buffer
+    // between the camera and the sun's screen position? A tiny quad is
+    // drawn (color/depth-write off) at the sun's NDC xy with depth tested
+    // against the scene already rendered this frame; ANY_SAMPLES_PASSED
+    // tells us if it was blocked. Result lags a frame or two (GPU latency,
+    // read back via IsReady() so we never stall the pipeline), so the
+    // fade factor is smoothed toward the target instead of snapping.
+    gl::Query       m_occQuery;
+    bool            m_occQueryPending = false;
+    float           m_visibility = 1.f;
+    gl::Buffer      m_occVbo, m_occIbo;
+    gl::VertexArray m_occVao;
+    gl::Shader*     m_occShader = nullptr;
+
     float computeFade(const Vec2& ndc) const;
     void  buildGeometry(const Vec2& sunNDC, float fade, float aspect);
+    float updateOcclusion(const Vec2& sunNDC, float aspect);
 };

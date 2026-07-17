@@ -112,6 +112,9 @@ public:
     static void ClearColor(f32 r, f32 g, f32 b, f32 a);
     static void ClearDepth(f32 depth);
     static void Clear(bool color, bool depth, bool stencil = false);
+    // clears a single MRT color attachment to its own value, independent of
+    // ClearColor()/Clear() (which apply one color to every draw buffer)
+    static void ClearColorAttachment(u32 index, f32 r, f32 g, f32 b, f32 a);
 
     // Drawing (a shader and a vertex array must be bound)
     static void Draw(RenderPrimitive prim, u32 vertexCount, u32 firstVertex = 0);

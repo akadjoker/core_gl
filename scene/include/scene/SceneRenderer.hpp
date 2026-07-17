@@ -46,6 +46,10 @@ public:
 
     void set_clear_color(float r, float g, float b);
     void set_light_dir(const Vec3& dir); // direction the light travels
+    // fill light added on top of the sun term everywhere (forward + terrain
+    // shaders), so surfaces facing away from the sun read as dim ambient
+    // instead of pure black. Default matches the old hardcoded floor.
+    void set_ambient_color(const Vec3& c) { m_ambientColor = c; }
 
     // ── sky : three kinds, all drawn in every view so water
     // reflections show them too). Lighting is independent: set_light_dir
@@ -145,6 +149,15 @@ public:
     void set_show_stats(bool on) { m_show_stats = on; }
     bool show_stats() const { return m_show_stats; }
 
+    // Immediate-mode wireframe sphere in world space — call after render()
+    // each frame you want it visible (nothing persists). Reuses the same
+    // lazily-initialized gizmo batch as the light/octree debug draws; no
+    // extra setup needed. Meant for live previews (a raycast pick point,
+    // the radius a dig/brush would carve, an AI's sense radius, ...) where
+    // spinning up a real Mesh/MeshInstance would be overkill.
+    void draw_wire_sphere(Camera3D& camera, const Vec3& center, float radius, gl::u8 r = 255, gl::u8 g = 220,
+                          gl::u8 b = 60, gl::u8 a = 255);
+
 private:
     void draw_stats(int viewport_w, int viewport_h);
     void draw_light_gizmos(const Mat4& viewProj);
@@ -202,6 +215,7 @@ private:
     gl::i32 m_locView = -1;
     gl::i32 m_locColor = -1;
     gl::i32 m_locLightDir = -1;
+    gl::i32 m_locAmbient = -1;
     gl::i32 m_locClipPlane = -1;
     gl::i32 m_locUnlit = -1;
     gl::i32 m_locCameraPos = -1;
@@ -302,6 +316,7 @@ private:
     gl::i32 m_locSkModel = -1, m_locSkViewProj = -1, m_locSkView = -1;
     gl::i32 m_locSkClipPlane = -1, m_locSkBones0 = -1, m_locSkColor = -1;
     gl::i32 m_locSkLightDir = -1, m_locSkCameraPos = -1, m_locSkSpecular = -1;
+    gl::i32 m_locSkAmbient = -1;
     gl::i32 m_locSkCascadeMat0 = -1, m_locSkSplits0 = -1, m_locSkCascadeCount = -1;
     gl::Shader m_skinnedDepth; // characters into the CSM cascades
     gl::i32 m_locSkDepthMVP = -1, m_locSkDepthBones0 = -1;
@@ -323,6 +338,14 @@ private:
     gl::Shader m_godray;
     gl::FrameBuffer m_hdrFbo, m_pingFbo;
     gl::Texture m_hdrColor, m_hdrDepth, m_pingColor;
+    // view-space normal G-buffer (COLOR1 of m_hdrFbo), written by the
+    // forward mesh/skinned pass alongside m_hdrColor — lets SSAO read real
+    // normals instead of reconstructing them from depth derivatives, which
+    // goes noisy at distance/grazing angles. RGB16F so a zero vector (the
+    // clear value) is an unambiguous "nothing wrote here" sentinel; passes
+    // that don't write it (terrain/BSP/water) fall back to the old
+    // depth-derivative path for their pixels.
+    gl::Texture m_hdrNormal;
     int m_postW = 0, m_postH = 0;
     bool m_post_enabled = false;
     bool m_godrays_enabled = false;
@@ -357,6 +380,7 @@ private:
 
     Vec3 m_clearColor = Vec3(0.5f, 0.65f, 0.8f);
     Vec3 m_lightDir = Vec3(0.5f, -1.0f, 0.3f);
+    Vec3 m_ambientColor = Vec3(0.30f, 0.30f, 0.32f);
     std::vector<RenderItem> m_items;  // reused across views
     std::vector<WaterNode*> m_waters;   // reused across frames
     std::vector<MirrorNode*> m_mirrors; // reused across frames

@@ -1,4 +1,11 @@
 #include "scene/Mesh.hpp"
+#include "scene/Material.hpp"
+
+Mesh::~Mesh()
+{
+    for (Material* m : m_materials)
+        delete m;
+}
 
 void Mesh::set_data(const MeshVertex* verts, u32 vcount, const u16* indices, u32 icount)
 {
@@ -213,6 +220,15 @@ void Mesh::update_vertices(const MeshVertex* verts, u32 vcount)
 void Mesh::set_dynamic_index_count(u32 icount)
 {
     if (!m_surfaces.empty()) m_surfaces[0].index_count = icount;
+}
+
+bool Mesh::set_material_texture(int slot, gl::Texture* tex)
+{
+    if (slot < 0 || slot >= (int)m_materials.size()) return false;
+    Material* m = get_material(slot);
+    if (!m) return false;
+    m->diffuse = tex;
+    return true;
 }
 
 void Mesh::release_gpu()

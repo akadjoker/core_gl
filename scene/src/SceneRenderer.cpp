@@ -148,6 +148,7 @@ bool SceneRenderer::init()
     m_locView = m_forward.GetLocation("u_view");
     m_locColor = m_forward.GetLocation("u_baseColor");
     m_locLightDir = m_forward.GetLocation("u_lightDir");
+    m_locAmbient = m_forward.GetLocation("u_ambient");
     m_locClipPlane = m_forward.GetLocation("u_clipPlane");
     m_locUnlit = m_forward.GetLocation("u_unlit");
     m_locCameraPos = m_forward.GetLocation("u_cameraPos");
@@ -296,6 +297,7 @@ bool SceneRenderer::init()
     m_locSkBones0 = m_skinned.GetLocation("u_bones[0]");
     m_locSkColor = m_skinned.GetLocation("u_baseColor");
     m_locSkLightDir = m_skinned.GetLocation("u_lightDir");
+    m_locSkAmbient = m_skinned.GetLocation("u_ambient");
     m_locSkCameraPos = m_skinned.GetLocation("u_cameraPos");
     m_locSkSpecular = m_skinned.GetLocation("u_specular");
     m_locSkCascadeMat0 = m_skinned.GetLocation("u_lightViewProj[0]");
@@ -372,6 +374,7 @@ void SceneRenderer::release()
     m_pingFbo.Release();
     m_hdrColor.Release();
     m_hdrDepth.Release();
+    m_hdrNormal.Release();
     m_pingColor.Release();
     m_ssaoFbo.Release();
     m_ssaoColor.Release();
@@ -451,6 +454,7 @@ bool SceneRenderer::enable_post(bool godrays, bool ssao)
         m_ssao.Bind();
         m_ssao.SetInt("u_depth", 0);
         m_ssao.SetInt("u_noise", 1);
+        m_ssao.SetInt("u_gnormal", 2);
         // hemisphere kernel, samples biased toward the center (more detail
         // close to the surface) — set once, the shader keeps it between binds
         for (int i = 0; i < 24; ++i)
@@ -502,6 +506,7 @@ bool SceneRenderer::ensure_post_targets(int w, int h)
 
     m_hdrColor.Release();
     m_hdrDepth.Release();
+    m_hdrNormal.Release();
     m_pingColor.Release();
     m_hdrFbo.Release();
     m_pingFbo.Release();
@@ -511,8 +516,12 @@ bool SceneRenderer::ensure_post_targets(int w, int h)
     m_hdrColor.Load2D(nullptr, w, h, gl::TextureFormat::RGBA16F);
     m_hdrColor.SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
     m_hdrColor.SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+    m_hdrNormal.Load2D(nullptr, w, h, gl::TextureFormat::RGB16F);
+    m_hdrNormal.SetFilter(gl::TextureFilter::NEAREST, gl::TextureFilter::NEAREST);
+    m_hdrNormal.SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
     m_hdrDepth.LoadDepth(w, h, gl::TextureFormat::DEPTH24);
     m_hdrFbo.AttachTexture(m_hdrColor, gl::Attachment::COLOR0);
+    m_hdrFbo.AttachTexture(m_hdrNormal, gl::Attachment::COLOR1);
     m_hdrFbo.AttachTexture(m_hdrDepth, gl::Attachment::DEPTH);
     m_hdrFbo.SetDrawBuffers();
     if (!m_hdrFbo.IsComplete()) return false;
@@ -552,6 +561,7 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
     gl::Renderer::SetDepthTest(true);
     gl::Renderer::SetDepthWrite(true);
     gl::Renderer::SetCull(gl::CullMode::NONE);
+    // front faces are closer to the light, so cull them to avoid self-shadowing
     gl::Renderer::SetPolygonOffset(true, 2.5f, 4.f);
 
     m_depth.Bind();
@@ -606,7 +616,8 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
             m_depth.Bind(); // next cascade continues with the static depth shader
         }
     }
-    gl::Renderer::SetPolygonOffset(false);
+   // gl::Renderer::SetPolygonOffset(false);
+    gl::Renderer::SetCull(gl::CullMode::BACK);
 }
 
 void SceneRenderer::set_clear_color(float r, float g, float b)
@@ -853,7 +864,7 @@ void SceneRenderer::draw_paged_terrain(const RenderView& v, const Frustum& frust
     m_terrainShader.SetMat4(m_locTViewProj, vp.x);
     m_terrainShader.SetMat4(m_locTView, v.view.x);
     m_terrainShader.SetVec3(m_locTLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
-    m_terrainShader.SetVec3(m_locTAmbient, 0.30f, 0.30f, 0.32f);
+    m_terrainShader.SetVec3(m_locTAmbient, m_ambientColor.x, m_ambientColor.y, m_ambientColor.z);
     m_terrainShader.SetVec4(m_locTClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
                             v.clip_plane.w);
 
@@ -935,6 +946,7 @@ void SceneRenderer::draw_skinned(const RenderView& v, const Frustum& frustum)
     m_skinned.SetMat4(m_locSkViewProj, vp.x);
     m_skinned.SetMat4(m_locSkView, v.view.x);
     m_skinned.SetVec3(m_locSkLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
+    m_skinned.SetVec3(m_locSkAmbient, m_ambientColor.x, m_ambientColor.y, m_ambientColor.z);
     m_skinned.SetVec3(m_locSkCameraPos, v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
     m_skinned.SetVec4(m_locSkClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
                       v.clip_plane.w);
@@ -971,18 +983,24 @@ void SceneRenderer::draw_skinned(const RenderView& v, const Frustum& frustum)
         for (int i = 0; i < nBones; ++i)
             m_skinned.SetMat4(m_locSkBones0 + i, palette[(size_t)i].x);
 
-        const Material* mat = s->get_material();
-        Vec3 color = mat ? mat->base_color : Vec3(1.f, 1.f, 1.f);
-        gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
-        diffuse->Bind(0);
-        m_gray.Bind(6);
-        m_skinned.SetVec3(m_locSkColor, color.x, color.y, color.z);
-        m_skinned.SetVec2(m_locSkSpecular, mat ? mat->specular : 0.f, mat ? mat->shininess : 32.f);
         m_skinned.SetMat4(m_locSkModel, world.x);
         mesh.vao().Bind();
+        m_gray.Bind(6);
+
+        const std::vector<Material*>& mats = s->get_materials();
         for (const Surface& surf : mesh.surfaces())
+        {
+            const Material* mat = (surf.material_slot >= 0 && surf.material_slot < (int)mats.size())
+                                      ? mats[surf.material_slot]
+                                      : (!mats.empty() ? mats[0] : nullptr);
+            Vec3 color = mat ? mat->base_color : Vec3(1.f, 1.f, 1.f);
+            gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
+            diffuse->Bind(0);
+            m_skinned.SetVec3(m_locSkColor, color.x, color.y, color.z);
+            m_skinned.SetVec2(m_locSkSpecular, mat ? mat->specular : 0.f, mat ? mat->shininess : 32.f);
             gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, surf.index_count,
                                       surf.first_index);
+        }
     }
 
     m_forward.Bind(); // draw_view continues with the forward shader
@@ -1093,6 +1111,7 @@ void SceneRenderer::draw_ribbontrails(const Mat4& viewProj)
     for (RibbonTrailNode* rt : m_ribbonTrails)
     {
         if (rt->index_count() == 0) continue;
+        gl::Renderer::SetDepthTest(rt->depthTest);
         if (rt->blend == ParticleBlendMode::Additive)
             gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE);
         else
@@ -1105,6 +1124,7 @@ void SceneRenderer::draw_ribbontrails(const Mat4& viewProj)
     }
 
     gl::Renderer::SetBlend(false);
+    gl::Renderer::SetDepthTest(true);
     gl::Renderer::SetDepthWrite(true);
 }
 
@@ -1178,12 +1198,17 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     gl::Renderer::SetClipDistance(0, v.use_clip);
     gl::Renderer::ClearColor(m_clearColor.x, m_clearColor.y, m_clearColor.z, 1.0f);
     gl::Renderer::Clear(true, true);
+    // normal G-buffer (COLOR1): zero is the "nothing wrote here" sentinel
+    // kSSAO_FS falls back on — only exists on the main HDR target, not the
+    // water/mirror reflection FBOs, which don't attach it.
+    if (v.target == &m_hdrFbo) gl::Renderer::ClearColorAttachment(1, 0.f, 0.f, 0.f, 0.f);
 
     m_forward.Bind();
     Mat4 vp = v.proj * v.view;
     m_forward.SetMat4(m_locViewProj, vp.x);
     m_forward.SetMat4(m_locView, v.view.x);
     m_forward.SetVec3(m_locLightDir, m_lightDir.x, m_lightDir.y, m_lightDir.z);
+    m_forward.SetVec3(m_locAmbient, m_ambientColor.x, m_ambientColor.y, m_ambientColor.z);
     m_forward.SetVec3(m_locCameraPos, v.cam_pos.x, v.cam_pos.y, v.cam_pos.z);
     m_forward.SetVec4(m_locClipPlane, v.clip_plane.x, v.clip_plane.y, v.clip_plane.z,
                       v.clip_plane.w);
@@ -1645,6 +1670,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
             m_ssao.Bind();
             m_hdrDepth.Bind(0);
             m_ssaoNoise.Bind(1);
+            m_hdrNormal.Bind(2);
             m_ssao.SetMat4("u_proj", proj.x);
             Mat4 invProj = Mat4::Inverse(proj);
             m_ssao.SetMat4("u_invProj", invProj.x);
@@ -1812,6 +1838,33 @@ void SceneRenderer::draw_light_gizmos(const Mat4& viewProj)
     }
 
     m_gizmoBatch.Render();
+    gl::Renderer::SetDepthWrite(true);
+}
+
+void SceneRenderer::draw_wire_sphere(Camera3D& camera, const Vec3& center, float radius, gl::u8 r, gl::u8 g,
+                                     gl::u8 b, gl::u8 a)
+{
+    if (!m_gizmoBatchReady)
+    {
+        if (!m_gizmoBatch.Init()) return;
+        m_gizmoBatchReady = true;
+    }
+
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(a < 255);
+    if (a < 255) gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+
+    Mat4 viewProj = camera.get_view_projection();
+    m_gizmoBatch.SetProjection(viewProj.x);
+    m_gizmoBatch.LoadIdentity();
+    m_gizmoBatch.SetMode(gl::RenderPrimitive::LINES);
+    m_gizmoBatch.SetColor(r, g, b, a);
+    m_gizmoBatch.SphereWire(center.x, center.y, center.z, radius);
+    m_gizmoBatch.Render();
+
+    gl::Renderer::SetBlend(false);
     gl::Renderer::SetDepthWrite(true);
 }
 

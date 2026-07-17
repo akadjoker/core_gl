@@ -3,7 +3,14 @@
 #include "scene/Math.hpp"
 #include <coregl/gl_buffer.hpp>
 #include <coregl/gl_vertex_array.hpp>
+#include <utility>
 #include <vector>
+
+class Material;
+namespace gl
+{
+class Texture;
+}
 
 struct MeshVertex
 {
@@ -28,6 +35,7 @@ class Mesh
 {
 public:
     Mesh() = default;
+    ~Mesh();
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
 
@@ -73,10 +81,27 @@ public:
     u32 vertex_count() const { return (u32)m_vertices.size(); }
     u32 index_count() const { return (u32)m_indices.size(); }
 
+    // real, ready-to-use Material* built by the loader (MeshLoader::load)
+    // from whatever the file's MATS chunk recorded — textures already
+    // loaded via AssetManager. Owned by the Mesh (freed in ~Mesh()); index
+    // i matches Surface::material_slot exactly. MeshInstance::set_mesh()
+    // copies this in as the default, so `instance->set_mesh(mesh)` alone
+    // is already correctly textured — no per-app material-building loop.
+    const std::vector<Material*>& materials() const { return m_materials; }
+    void set_owned_materials(std::vector<Material*> mats) { m_materials = std::move(mats); }
+
+    bool set_material_texture(int slot, gl::Texture* tex);
+    Material* get_material(int slot) const
+    {
+        return (slot >= 0 && slot < (int)m_materials.size()) ? m_materials[(size_t)slot] : nullptr;
+    }
+
+
 private:
     std::vector<MeshVertex> m_vertices;
     std::vector<u32> m_indices; // always u32 (uploaded as a 32-bit IB)
     std::vector<Surface> m_surfaces;
+    std::vector<Material*> m_materials; // owned
     BoundingBox m_bounds;
     gl::Buffer m_vbo;
     gl::Buffer m_ibo;

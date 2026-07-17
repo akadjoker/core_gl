@@ -585,6 +585,15 @@ void Renderer::Clear(bool color, bool depth, bool stencil)
     if (mask) glClear(mask);
 }
 
+// clears one MRT draw buffer independently of the shared glClearColor state
+// (e.g. a G-buffer normal target that needs a different clear value than
+// the scene's sky-color COLOR0 attachment in the same FBO)
+void Renderer::ClearColorAttachment(u32 index, f32 r, f32 g, f32 b, f32 a)
+{
+    const float value[4] = {r, g, b, a};
+    glClearBufferfv(GL_COLOR, (GLint)index, value);
+}
+
 // primitive count from element count, added to the stats
 static void countPrims(RenderPrimitive prim, u32 count, u32 instances)
 {

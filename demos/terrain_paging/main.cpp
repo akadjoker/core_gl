@@ -41,8 +41,8 @@ int main(int argc, char** argv)
     renderer.set_light_dir(Vec3(0.4f, -0.7f, 0.3f));
     if (const char* sky = getenv("COREGL_SKY"); sky && sky[0] == 'b')
     {
-        // cubemap skybox (Ogre-style); the sun light keeps working —
-        // lighting is driven by set_light_dir, not by the background
+        // cubemap skybox   the sun light keeps working —
+        // lighting is driven by set_light_dir 
         const char* faces[6] = {
             "assets/cubemaps/skybox01_px.jpg", "assets/cubemaps/skybox01_nx.jpg",
             "assets/cubemaps/skybox01_py.jpg", "assets/cubemaps/skybox01_ny.jpg",

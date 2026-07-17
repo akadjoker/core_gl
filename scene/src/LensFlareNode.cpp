@@ -33,6 +33,18 @@ void main() {
 }
 )";
 
+// occlusion probe: a tiny NDC quad at the sun's screen position, depth
+// tested against the scene, color/depth write off — only exists to make
+// the hardware occlusion query count samples.
+static const char* kOccVS = R"(
+layout(location = 0) in vec3 a_pos;
+void main() { gl_Position = vec4(a_pos, 1.0); }
+)";
+static const char* kOccFS = R"(
+out vec4 frag;
+void main() { frag = vec4(1.0); }
+)";
+
 static bool loadStage(gl::Shader& shader, gl::PipelineStage stage, const char* body)
 {
     std::string src = std::string(gl::Renderer::ShaderHeader(stage)) + body;
@@ -158,6 +170,28 @@ bool LensFlareNode::ensure_gpu()
     m_vao.SetIndexBuffer(m_ibo, gl::VertexAttribType::UINT);
 
     m_scratchVerts.resize((size_t)maxVerts);
+
+    // occlusion probe: one dynamic quad (updated per-frame to track the
+    // sun's screen position), static index buffer
+    if (!m_occShader)
+    {
+        m_occShader = new gl::Shader();
+        if (!loadStage(*m_occShader, gl::PipelineStage::VERTEX, kOccVS) ||
+            !loadStage(*m_occShader, gl::PipelineStage::FRAGMENT, kOccFS) ||
+            !m_occShader->Link())
+        {
+            delete m_occShader; m_occShader = nullptr;
+        }
+    }
+    const u32 occIdx[6] = {0, 1, 2, 2, 3, 0};
+    m_occVbo.Allocate(gl::BufferType::ARRAY, nullptr, 4 * 3 * sizeof(float),
+                       gl::UsageType::DYNAMIC_DRAW);
+    m_occIbo.Allocate(gl::BufferType::ELEMENT_ARRAY, occIdx, sizeof(occIdx),
+                       gl::UsageType::STATIC_DRAW);
+    const gl::VertexAttrib occLayout[] = {{gl::VertexAttribType::FLOAT, 3, 0, false}};
+    m_occVao.AddVertexBuffer(m_occVbo, occLayout, 1, 3 * sizeof(float));
+    m_occVao.SetIndexBuffer(m_occIbo, gl::VertexAttribType::UINT);
+
     m_gpuReady = true;
     return true;
 }
@@ -171,6 +205,61 @@ void LensFlareNode::release_gpu()
     m_tex.Release();
     m_texLoaded = false;
     m_gpuReady = false;
+
+    delete m_occShader; m_occShader = nullptr;
+    m_occVao.Release();
+    m_occVbo.Release();
+    m_occIbo.Release();
+    m_occQuery.Release();
+    m_occQueryPending = false;
+}
+
+// draws a tiny NDC quad at the sun's screen position (color/depth write
+// off) inside a hardware occlusion query, and folds the *previous* query's
+// result (if it's ready by now — never blocks) into a smoothed visibility
+// factor. depth is pinned just short of the far plane: real geometry is
+// always nearer (passes LESS), and open sky/nothing-drawn leaves the depth
+// buffer at its 1.0 clear value (also passes), so an unoccluded sun always
+// reads visible regardless of how far it actually is.
+float LensFlareNode::updateOcclusion(const Vec2& sunNDC, float aspect)
+{
+    if (!m_occShader) return 1.f;
+
+    if (!m_occQuery.IsValid()) m_occQuery.Create(gl::QueryType::ANY_SAMPLES_PASSED);
+
+    if (m_occQueryPending && m_occQuery.IsReady())
+    {
+        float target = m_occQuery.GetResult() != 0 ? 1.f : 0.f;
+        m_visibility += (target - m_visibility) * 0.2f;
+        m_occQueryPending = false;
+    }
+
+    const float hH = 0.015f, hW = hH / aspect, z = 0.9999f;
+    const float verts[4 * 3] = {
+        sunNDC.x - hW, sunNDC.y - hH, z, sunNDC.x + hW, sunNDC.y - hH, z,
+        sunNDC.x + hW, sunNDC.y + hH, z, sunNDC.x - hW, sunNDC.y + hH, z,
+    };
+    m_occVbo.Upload(verts, sizeof(verts));
+
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetColorWrite(false, false, false, false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+
+    m_occShader->Bind();
+    m_occVao.Bind();
+    if (!m_occQueryPending) // don't start a new query while one's still in flight
+    {
+        m_occQuery.Begin();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, 6);
+        m_occQuery.End();
+        m_occQueryPending = true;
+    }
+
+    gl::Renderer::SetColorWrite(true, true, true, true);
+    gl::Renderer::SetDepthWrite(true);
+
+    return m_visibility;
 }
 
 void LensFlareNode::buildGeometry(const Vec2& sunNDC, float fade, float aspect)
@@ -227,6 +316,9 @@ u32 LensFlareNode::build(Camera3D& cam, const Vec3& sunDir)
     float elev = sunDir.y / 0.08f;
     fade *= elev < 0.f ? 0.f : (elev > 1.f ? 1.f : elev);
     if (fade <= 0.f) return 0;
+
+    fade *= updateOcclusion(sunNDC, cam.get_aspect());
+    if (fade <= 0.001f) return 0;
 
     buildGeometry(sunNDC, fade, cam.get_aspect());
     return m_indexCount;

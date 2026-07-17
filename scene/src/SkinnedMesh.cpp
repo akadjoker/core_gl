@@ -1,6 +1,8 @@
 #include "scene/SkinnedMesh.hpp"
+#include "scene/AssetManager.hpp"
 #include "scene/ByteArray.hpp"
 #include "scene/Filesystem.hpp"
+#include "scene/Material.hpp"
 #include <coregl/gl_log.hpp>
 #include <algorithm>
 
@@ -11,6 +13,7 @@ static const gl::u32 kChunkVrts = 0x56525453; // "VRTS"
 static const gl::u32 kChunkIdxs = 0x49445853; // "IDXS"
 static const gl::u32 kChunkSkin = 0x534B494E; // "SKIN"
 static const gl::u32 kChunkSkel = 0x534B454C; // "SKEL"
+static const gl::u32 kChunkMats = 0x4D415453; // "MATS"
 static const gl::u32 kAnimMagic = 0x414E494D; // "ANIM"
 static const gl::u32 kAnimInfo = 0x494E464F;  // "INFO"
 static const gl::u32 kAnimChan = 0x4348414E;  // "CHAN"
@@ -137,10 +140,68 @@ static bool parseSkeleton(scene::ByteArray& in, Skeleton& out)
     return true;
 }
 
+// MATS: numMaterials, then per material — cstring name, f32 diffuse xyz,
+// f32 specular xyz, f32 shininess, u8 textureCount, then that many cstring
+// texture filenames. Written by MeshWriter::WriteMaterialsChunk; index i
+// here lines up 1:1 with Surface::material_slot == i.
+static bool parseMaterials(scene::ByteArray& in, std::vector<SkinnedMesh::MaterialInfo>& out)
+{
+    gl::u32 numMats = 0;
+    if (!in.readU32(numMats)) return false;
+    out.resize(numMats);
+     gl::Log::Info("SkinnedMesh: parsing %u materials", numMats);
+    for (gl::u32 i = 0; i < numMats; ++i)
+    {
+        SkinnedMesh::MaterialInfo& m = out[i];
+        if (!readCString(in, m.name)) return false;
+        if (!readVec3(in, m.diffuse) || !readVec3(in, m.specular)) return false;
+        if (!in.readF32(m.shininess)) return false;
+        gl::u8 texCount = 0;
+        if (!in.readU8(texCount)) return false;
+        m.textures.resize(texCount);
+        for (gl::u8 t = 0; t < texCount; ++t)
+            if (!readCString(in, m.textures[t])) return false;
+    }
+    return true;
+}
+
 SkinnedMesh::~SkinnedMesh()
 {
     for (AnimationClip* c : m_clips)
         delete c;
+    for (Material* m : m_materials)
+        delete m;
+}
+
+static std::string dirOf(const std::string& path)
+{
+    auto slash = path.find_last_of('/');
+    return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+}
+
+// turns material_infos() (raw MATS chunk data) into real, ready-to-render
+// Material* with textures loaded — so a caller that just does
+// `instance->set_mesh(res)` already gets a correctly multi-textured
+// character, no per-app material-building loop required.
+static void buildMaterials(const std::string& meshPath,
+                           const std::vector<SkinnedMesh::MaterialInfo>& infos,
+                           std::vector<Material*>& out)
+{
+    const std::string dir = dirOf(meshPath);
+    out.reserve(infos.size());
+    for (const SkinnedMesh::MaterialInfo& mi : infos)
+    {
+        Material* mat = new Material(mi.diffuse);
+        mat->specular = mi.specular.x;
+        mat->shininess = mi.shininess;
+        if (!mi.textures.empty())
+        {
+            std::string texPath = dir + mi.textures[0];
+            mat->diffuse = assets::AssetManager::instance().loadTexture(mi.textures[0].c_str(),
+                                                                        texPath.c_str());
+        }
+        out.push_back(mat);
+    }
 }
 
 bool SkinnedMesh::load(const char* meshPath)
@@ -156,6 +217,15 @@ bool SkinnedMesh::load(const char* meshPath)
     gl::u32 magic = 0, version = 0;
     if (!data.readU32(magic) || !data.readU32(version) || magic != kMeshMagic)
     {
+        // glTF binary (.glb) starts with the ASCII magic "glTF"; JSON
+        // (.gltf) starts with '{' (its first byte, since magic is the
+        // first 4 bytes read as a little-endian u32) — either way, hand
+        // off to the glTF path instead of failing.
+        if (magic == 0x46546C67u || (magic & 0xFFu) == '{') return load_gltf(meshPath);
+        // Blitz3D: root chunk tag "BB3D" read as the first 4 bytes.
+        if (magic == 0x44334242u) return load_b3d(meshPath);
+        // IQM: 16-byte "INTERQUAKEMODEL\0" magic — the first 4 bytes are "INTE".
+        if (magic == 0x45544E49u) return load_iqm(meshPath);
         gl::Log::Error("SkinnedMesh: '%s' is not a mesh file", meshPath);
         return false;
     }
@@ -177,7 +247,8 @@ bool SkinnedMesh::load(const char* meshPath)
             ok = parseSkeleton(data, m_skeleton);
             m_skeleton.finalize(); // topological order for evaluate()
         }
-        // MATS: names/textures — the game assigns its own materials
+        else if (id == kChunkMats)
+            ok = parseMaterials(data, m_materialInfos);
 
         if (!ok)
         {
@@ -207,8 +278,11 @@ bool SkinnedMesh::load(const char* meshPath)
         m_mesh.add_surface(s.first_index, s.index_count, s.material_slot, s.bounds);
     m_mesh.compute_tangents();
 
-    gl::Log::Info("SkinnedMesh: '%s' — %u verts, %u indices, %d bones", meshPath,
-                  (gl::u32)verts.size(), (gl::u32)indices.size(), m_skeleton.bone_count());
+    if (!m_materialInfos.empty()) buildMaterials(meshPath, m_materialInfos, m_materials);
+
+    gl::Log::Info("SkinnedMesh: '%s' — %u verts, %u indices, %d bones, %zu materials", meshPath,
+                  (gl::u32)verts.size(), (gl::u32)indices.size(), m_skeleton.bone_count(),
+                  m_materials.size());
     m_loaded = true;
     return true;
 }
@@ -229,6 +303,9 @@ bool SkinnedMesh::load_animations(const char* animPath)
     gl::u32 magic = 0, version = 0;
     if (!data.readU32(magic) || !data.readU32(version) || magic != kAnimMagic)
     {
+        if (magic == 0x46546C67u || (magic & 0xFFu) == '{') return load_animations_gltf(animPath);
+        if (magic == 0x44334242u) return load_animations_b3d(animPath);
+        if (magic == 0x45544E49u) return load_animations_iqm(animPath);
         gl::Log::Error("SkinnedMesh: '%s' is not an anim file", animPath);
         return false;
     }
@@ -319,6 +396,15 @@ const AnimationClip* SkinnedMesh::find_clip(const std::string& name) const
     for (AnimationClip* c : m_clips)
         if (c && c->name() == name) return c;
     return nullptr;
+}
+
+bool SkinnedMesh::set_material_texture(int slot, gl::Texture* tex)
+{
+    if (slot < 0 || slot >= (int)m_materials.size()) return false;
+    Material* m = get_material(slot);
+    if (!m) return false;
+    m->diffuse = tex;
+    return true;
 }
 
 // geometry + the extra skinning stream. Bone ids ride as floats (converted

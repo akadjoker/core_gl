@@ -16,6 +16,10 @@ void SkinnedMeshInstance::set_mesh(SkinnedMesh* shared)
     m_palette.resize((size_t)n);
     shared->skeleton().bind_pose(m_locals.data());
     m_player.bind(&shared->skeleton(), &shared->clips());
+    // default to the mesh's own materials (built at load() time from the
+    // exported MATS chunk) — set_material()/set_materials() afterward can
+    // still override with a custom look.
+    m_materials = shared->materials();
 }
 
 int SkinnedMeshInstance::bone_global_index(const char* boneName) const

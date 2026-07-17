@@ -1,6 +1,8 @@
 #include "scene/MeshLoader.hpp"
+#include "scene/AssetManager.hpp"
 #include "scene/ByteArray.hpp"
 #include "scene/Filesystem.hpp"
+#include "scene/Material.hpp"
 #include "scene/Mesh.hpp"
 #include <coregl/gl_log.hpp>
 #include <algorithm>
@@ -33,7 +35,7 @@ static bool readVec3(scene::ByteArray& in, Vec3& v)
     return in.readF32(v.x) && in.readF32(v.y) && in.readF32(v.z);
 }
 
-static bool parseMaterials(scene::ByteArray& in, std::vector<MeshLoader::MaterialDesc>* out)
+static bool parseMaterials(scene::ByteArray& in, std::vector<MeshLoader::MaterialDesc>& out)
 {
     u32 count = 0;
     if (!in.readU32(count)) return false;
@@ -52,9 +54,41 @@ static bool parseMaterials(scene::ByteArray& in, std::vector<MeshLoader::Materia
             if (!readCString(in, tex)) return false;
             mat.textures.push_back(tex);
         }
-        if (out) out->push_back(mat);
+        out.push_back(mat);
     }
     return true;
+}
+
+static std::string dirOf(const std::string& path)
+{
+    auto slash = path.find_last_of('/');
+    return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
+}
+
+// turns the parsed MaterialDesc list into real, ready-to-render Material*
+// with textures loaded — so `instance->set_mesh(mesh)` alone is already
+// correctly textured, no per-app material-building loop needed (mirrors
+// SkinnedMesh::load()'s own buildMaterials).
+static void buildMaterials(const std::string& path, const std::vector<MeshLoader::MaterialDesc>& descs,
+                           Mesh& out)
+{
+    const std::string dir = dirOf(path);
+    std::vector<Material*> mats;
+    mats.reserve(descs.size());
+    for (const MeshLoader::MaterialDesc& d : descs)
+    {
+        Material* mat = new Material(d.diffuse);
+        mat->specular = d.specular.x;
+        mat->shininess = d.shininess;
+        if (!d.textures.empty())
+        {
+            std::string texPath = dir + d.textures[0];
+            mat->diffuse = assets::AssetManager::instance().loadTexture(d.textures[0].c_str(),
+                                                                        texPath.c_str());
+        }
+        mats.push_back(mat);
+    }
+    out.set_owned_materials(std::move(mats));
 }
 
 // one BUFF chunk = one surface, appended to the accumulated arrays
@@ -144,6 +178,7 @@ bool MeshLoader::load(const char* path, Mesh& out, std::vector<MaterialDesc>* ma
 
     std::vector<MeshVertex> verts;
     std::vector<u32> indices;
+    std::vector<MaterialDesc> descs; // always captured, regardless of `materials`
     int buffers = 0;
 
     while (data.cursor() + 8 <= data.size())
@@ -154,7 +189,7 @@ bool MeshLoader::load(const char* path, Mesh& out, std::vector<MaterialDesc>* ma
 
         bool ok = true;
         if (id == kChunkMats)
-            ok = parseMaterials(data, materials);
+            ok = parseMaterials(data, descs);
         else if (id == kChunkBuff)
         {
             ok = parseBuffer(data, chunkEnd, verts, indices, out);
@@ -191,7 +226,10 @@ bool MeshLoader::load(const char* path, Mesh& out, std::vector<MaterialDesc>* ma
         out.add_surface(s.first_index, s.index_count, s.material_slot, s.bounds);
     out.compute_tangents();
 
-    gl::Log::Info("MeshLoader: '%s' — %d surfaces, %u verts, %u indices", path, buffers,
-                  (u32)verts.size(), (u32)indices.size());
+    if (!descs.empty()) buildMaterials(path, descs, out);
+    if (materials) *materials = descs;
+
+    gl::Log::Info("MeshLoader: '%s' — %d surfaces, %u verts, %u indices, %zu materials", path,
+                  buffers, (u32)verts.size(), (u32)indices.size(), descs.size());
     return true;
 }

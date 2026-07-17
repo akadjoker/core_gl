@@ -606,7 +606,56 @@ void AssimpLoader::ProcessBones(const aiScene* scene, SimpleMesh* mesh)
         mesh->bones.push_back(bone);
         m_boneMap[boneName] = boneIndex;
     }
-    
+
+    // 2b. Ogre allows attachObjectToBone() on bones that skin zero vertices
+    // (Sinbad's Sheath.L/R, Handle.L/R — pure attachment points for swords).
+    // Assimp only creates an aiBone entry for WEIGHTED bones, so step 1
+    // above never sees these; they'd silently vanish from the exported
+    // skeleton otherwise. Walk every remaining node and pull in the ones
+    // nested under an already-known bone (and not a real mesh node) as
+    // zero-weight bones, computing their inverse bind pose by hand since
+    // there's no aiBone::mOffsetMatrix to read it from.
+    for (const auto& pair : nodeMap)
+    {
+        const std::string& nodeName = pair.first;
+        if (m_boneMap.find(nodeName) != m_boneMap.end()) continue;
+        aiNode* node = pair.second;
+        if (node->mNumMeshes > 0) continue; // a real mesh node, not an attachment point
+
+        aiNode* ancestor = node->mParent;
+        bool nested = false;
+        while (ancestor)
+        {
+            if (m_boneMap.find(ancestor->mName.C_Str()) != m_boneMap.end())
+            {
+                nested = true;
+                break;
+            }
+            ancestor = ancestor->mParent;
+        }
+        if (!nested) continue;
+
+        Bone bone;
+        bone.name = nodeName;
+        bone.parentIndex = -1;
+        CopyMatrix(node->mTransformation, bone.localTransform);
+
+        // global bind transform = product of local transforms root -> node
+        aiMatrix4x4 global = node->mTransformation;
+        for (aiNode* p = node->mParent; p; p = p->mParent)
+            global = p->mTransformation * global;
+        aiMatrix4x4 inv = global;
+        inv.Inverse();
+        CopyMatrix(inv, bone.inverseBindPose);
+
+        u32 boneIndex = mesh->bones.size();
+        mesh->bones.push_back(bone);
+        m_boneMap[nodeName] = boneIndex;
+
+        if (m_verbose)
+            std::cout << "  + attachment bone (0 weight): " << nodeName << std::endl;
+    }
+
     // 3. CRÍTICO: Preenche hierarquia usando o scene graph
     for (const auto& pair : nodeMap)
     {

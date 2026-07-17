@@ -6,6 +6,7 @@
 
 #include <coregl/gl_core.hpp>
 #include <scene/Filesystem.hpp>
+#include <scene/Input.hpp>
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <cstdlib>
@@ -74,10 +75,40 @@ struct DemoApp
             SDL_GL_GetDrawableSize(window, &dw, &dh);
             gif.Start(dw, dh);
         }
+
+        Input::Init();
         return true;
     }
 
     void DrawableSize(int* w, int* h) { SDL_GL_GetDrawableSize(window, w, h); }
+
+    // Opt-in event pump for demos that use Behavior nodes (FreeFlyBehavior,
+    // OrbitBehavior, CharacterBehavior, ...): rolls Input's current->previous
+    // state (Input::Update(), same ordering as tmp/core's Device::Run()),
+    // then drains the SDL queue into Input::On*(). Demos that poll SDL
+    // directly (see demo_fly.hpp's FlyCam) don't need this and can ignore
+    // it entirely. Returns false once SDL_QUIT is seen.
+    bool PollEvents()
+    {
+        Input::Update();
+        SDL_Event event;
+        while (SDL_PollEvent(&event) != 0)
+        {
+            switch (event.type)
+            {
+            case SDL_QUIT: return false;
+            case SDL_KEYDOWN: Input::OnKeyDown(event.key); break;
+            case SDL_KEYUP: Input::OnKeyUp(event.key); break;
+            case SDL_TEXTINPUT: Input::OnTextInput(event.text); break;
+            case SDL_MOUSEBUTTONDOWN: Input::OnMouseDown(event.button); break;
+            case SDL_MOUSEBUTTONUP: Input::OnMouseUp(event.button); break;
+            case SDL_MOUSEMOTION: Input::OnMouseMove(event.motion); break;
+            case SDL_MOUSEWHEEL: Input::OnMouseWheel(event.wheel); break;
+            default: break;
+            }
+        }
+        return true;
+    }
 
     // Captures the just-rendered backbuffer for the GIF recorder (if active)
     // before it gets swapped, then presents the frame.

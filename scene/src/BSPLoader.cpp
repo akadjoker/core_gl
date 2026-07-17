@@ -490,6 +490,10 @@ Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
     for (const SurfDef& s : surfDefs)
         m->add_surface(s.start, s.count, s.slot, s.bb);
     m->set_lightmap_uvs(outLmUvs.data(), static_cast<u32>(outLmUvs.size()));
+    // Mesh takes ownership from here — freed with it in AssetManager::clear()/
+    // ~Mesh(); out_mats stays a valid view for the caller (texture tweaks,
+    // etc.) but must not be deleted by it.
+    m->set_owned_materials(out_mats);
     m->upload();
 
     gl::Log::Info("[BSP] '%s': verts=%u tris=%u surfaces=%u textures=%u lm_uvs=%d lm_pages=%d", path,

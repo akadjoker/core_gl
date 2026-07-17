@@ -269,9 +269,9 @@ void InfiniteTerrainNode::_update(float dt)
                 if (!p->node)
                 {
                     p->node = create_child<MeshInstance>("patch");
-                    p->node->set_material(m_material);
                 }
                 p->node->set_mesh(&p->meshes[lod]);
+                p->node->set_material(m_material);
                 p->activeLod = lod;
             }
             p->node->visible = true;

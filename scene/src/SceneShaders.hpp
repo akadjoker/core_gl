@@ -21,6 +21,7 @@ uniform mat4 u_view;
 uniform vec4 u_clipPlane;
 uniform mat4 u_bones[80];
 out vec3 v_normal;
+out vec3 v_normalView; // for the SSAO G-buffer (COLOR1) — view-space, matches kSSAO_FS's space
 out vec2 v_uv;
 out vec3 v_worldPos;
 out float v_viewDepth;
@@ -35,6 +36,7 @@ void main()
     vec4 worldPos = u_model * skinned;
     v_worldPos = worldPos.xyz;
     v_normal = normalize(mat3(u_model) * (mat3(skin) * a_normal));
+    v_normalView = normalize(mat3(u_view) * v_normal);
     v_uv = a_uv;
     v_viewDepth = -(u_view * worldPos).z;
     CLIP_SETUP(dot(worldPos, u_clipPlane));
@@ -56,6 +58,7 @@ uniform mat4 u_viewProj;
 uniform mat4 u_view;
 uniform vec4 u_clipPlane;
 out vec3 v_normal;
+out vec3 v_normalView; // for the SSAO G-buffer (COLOR1) — view-space, matches kSSAO_FS's space
 out vec2 v_uv;
 out vec3 v_worldPos;
 out float v_viewDepth;
@@ -65,6 +68,7 @@ void main()
     vec4 worldPos = u_model * vec4(a_position, 1.0);
     v_worldPos = worldPos.xyz;
     v_normal = normalize(mat3(u_model) * a_normal);
+    v_normalView = normalize(mat3(u_view) * v_normal);
     v_uv = a_uv;
     v_viewDepth = -(u_view * worldPos).z;
     CLIP_SETUP(dot(worldPos, u_clipPlane));
@@ -140,13 +144,16 @@ void main()
 
 static const char* kFwdFS = R"(
 in vec3 v_normal;
+in vec3 v_normalView;
 in vec2 v_uv;
 in vec3 v_worldPos;
 in float v_viewDepth;
-out vec4 OutColor;
+layout(location = 0) out vec4 OutColor;
+layout(location = 1) out vec4 OutNormal; // SSAO G-buffer (COLOR1) — ignored when unbound
 
 uniform vec3 u_baseColor;
 uniform vec3 u_lightDir; // direction the light travels (sun -> ground)
+uniform vec3 u_ambient;  // fill light added on top of the sun term
 uniform float u_unlit;
 uniform sampler2D u_diffuse;
 uniform sampler2D u_detail; // mid-gray neutral
@@ -351,7 +358,7 @@ void main()
     float spec = pow(max(dot(n, normalize(toLight + viewDir)), 0.0), u_specular.y) * u_specular.x;
 
     float lit = 1.0 - occlusion;
-    vec3 color = albedo * (0.30 + 0.70 * diffuse * lit) + vec3(spec * lit);
+    vec3 color = albedo * (u_ambient + (1.0 - u_ambient) * diffuse * lit) + vec3(spec * lit);
 
     // ── local lights ──
     for (int i = 0; i < u_pointCount; ++i)
@@ -419,6 +426,7 @@ void main()
     }
 
     OutColor = vec4(color, 1.0);
+    OutNormal = vec4(normalize(v_normalView), 0.0);
 }
 )";
 
@@ -638,17 +646,22 @@ void main()
 }
 )";
 
-// ── SSAO: classic hemisphere-kernel ambient occlusion. No G-buffer/prepass —
-// this is a single-pass forward renderer, so normals are reconstructed from
-// the existing HDR depth buffer via screen-space derivatives instead of
-// adding an MRT normal output to every forward/skinned/BSP shader. Some
-// normal error at silhouette edges vs. true per-vertex normals; acceptable
-// for a contact-AO pass. Runs before godrays (AO darkens surface shading,
-// godrays add atmospheric light on top — shouldn't be dimmed by it). ──
+// ── SSAO: classic hemisphere-kernel ambient occlusion. Normals come from
+// the forward/skinned pass's G-buffer (u_gnormal, COLOR1 of the HDR
+// target, view-space) when available — real per-vertex normals, not
+// reconstructed ones. Depth-derivative reconstruction (screen-space
+// derivatives of the depth buffer) is kept as a fallback for pixels no
+// forward pass wrote to (terrain/BSP/water, or when the demo doesn't need
+// the G-buffer): it's cheap but goes noisy at distance/grazing angles once
+// depth precision compresses, which is why it existed alone originally and
+// why it's now second choice. Runs before godrays (AO darkens surface
+// shading, godrays add atmospheric light on top — shouldn't be dimmed by
+// it). ──
 static const char* kSSAO_FS = R"(
 in vec2 v_uv;
 out vec4 OutColor; // R8 target — only .r is read back
 uniform sampler2D u_depth;
+uniform sampler2D u_gnormal; // view-space, RGB16F, zero vector = "not written"
 uniform sampler2D u_noise;
 uniform mat4 u_proj;
 uniform mat4 u_invProj;
@@ -678,11 +691,10 @@ void main()
     }
     vec3 viewPos = viewPosFromDepth(v_uv, depth);
 
-    // depth-derived normal: screen-space derivatives of the reconstructed
-    // view-space position. Sign convention is easy to get backwards here —
-    // if AO shows up as bright halos instead of dark contact creases,
-    // flip this cross() order.
-    vec3 normal = normalize(cross(dFdy(viewPos), dFdx(viewPos)));
+    vec3 gNormal = texture(u_gnormal, v_uv).rgb;
+    vec3 normal = dot(gNormal, gNormal) > 0.01
+                      ? normalize(gNormal)
+                      : normalize(cross(dFdy(viewPos), dFdx(viewPos)));
 
     vec3 randomVec = normalize(vec3(texture(u_noise, v_uv * u_noiseScale).xy * 2.0 - 1.0, 0.0));
     vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));

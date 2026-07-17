@@ -63,10 +63,10 @@ static gl::Texture* find_diffuse(assets::AssetManager& assets, const std::string
     for (int i = 0; i < count; ++i)
         if (materialName == looks[i].materialName)
             return looks[i].diffuseTexture
-                       ? assets.loadTexture(looks[i].diffuseTexture,
-                                            (std::string("assets/fresneldemo/textures/") +
-                                             looks[i].diffuseTexture)
-                                                .c_str())
+                       ? assets.loadTexture(
+                             looks[i].diffuseTexture,
+                             (std::string("assets/fresneldemo/textures/") + looks[i].diffuseTexture)
+                                 .c_str())
                        : nullptr;
     fprintf(stderr, "fresnel: no material lookup for '%s'\n", materialName.c_str());
     return nullptr;
@@ -89,17 +89,26 @@ int main(int argc, char** argv)
     }
     renderer.set_light_dir(Vec3(0.4f, -0.8f, 0.3f));
     renderer.set_sky_enabled(true);
-    renderer.enable_shadows(4, 1024, 2000.f);
-    renderer.enable_post(true, false); // godrays off (indoor, no sky shafts), ssao on
+    // distance was 2000 (way beyond this ~360-unit room) — cascades spent
+    // nearly all their texels on empty space past the walls, leaving the
+    // room itself covered by texels far coarser than the shader's bias
+    // constants expect, which reads as thin light leaks along geometry
+    // edges (tile grout, pool rim). 450 comfortably covers the room with
+    // margin, at normal texel density.
+    renderer.enable_shadows(4, 1024, 450.f);
+    renderer.enable_post(false, true); // godrays off (indoor, no sky shafts), ssao on
+    // radius tuning alone can't fix this scene: at ~260-350 units from the
+    // camera with a 2000-unit far plane, depth is compressed to ~0.998 here,
+    // and our SSAO reconstructs normals from depth derivatives (no G-buffer)
+    // — those go noisy at this compression, so any radius just occludes
+    // against noise instead of real contact creases. Needs a real normal
+    // buffer to fix properly (see plan item 4/6). Left at the shared default
+    // for now.
     renderer.set_ssao_params(0.15f, 1.5f);
 
     Scene scene;
     assets::AssetManager& assets = assets::AssetManager::instance();
 
-    // the three pieces are authored to already fit together at the origin
-    // (same as Ogre's Fresnel.h: each is attached to the root node with no
-    // offset) — RomanBathLower is the submerged geometry, RomanBathUpper is
-    // the above-water structure, Columns are the freestanding pillars.
     const Piece pieces[] = {
         {"assets/fresneldemo/RomanBathUpper.h3d", "upper", kUpperLowerLooks,
          (int)(sizeof(kUpperLowerLooks) / sizeof(kUpperLowerLooks[0]))},
@@ -119,8 +128,8 @@ int main(int argc, char** argv)
             continue;
         }
         mesh->upload();
-        printf("%s: %u surfaces, %u verts, %u indices\n", p.name,
-               (unsigned)mesh->surfaces().size(), mesh->vertex_count(), mesh->index_count());
+        printf("%s: %u surfaces, %u verts, %u indices\n", p.name, (unsigned)mesh->surfaces().size(),
+               mesh->vertex_count(), mesh->index_count());
 
         // mesh2h3d only carries material names (no .material script parsing)
         // — look up the diffuse texture per name from the table above
@@ -134,21 +143,20 @@ int main(int argc, char** argv)
         }
 
         MeshInstance* inst = scene.root().create_child<MeshInstance>(p.name);
-        inst->set_scale(0.2f); // original Ogre units are 10x bigger than CoreGL's
+        inst->set_scale(0.2f);
         inst->set_mesh(mesh);
         inst->set_materials(materials);
     }
 
-
     // the water surface: just another node in the tree
     WaterNode* water = scene.root().create_child<WaterNode>("water");
-    water->set_size(140.f); // 200x200 world units, centered at the origin
+    water->set_size(140.f);
+    water->water_color = Vec3(0.4f, 0.5f, 0.6f);
     water->set_position(0.f, 0.f, 0.f);
-
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
     camera->set_perspective(60.f, 0.5f, 2000.f);
-    camera->set_position(-50.f, 125.f, 760.f); // matches Ogre Fresnel.h's start view
+    camera->set_position(-50.f, 125.f, 260.f);
 
     scene.set_active_camera(camera);
     scene.ready();
@@ -157,10 +165,8 @@ int main(int argc, char** argv)
     fly.speed = 150.f;
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
-    float timeOfDay =   0.9f;
+    float timeOfDay = 0.9f;
     LensFlareNode* flare = scene.root().create_child<LensFlareNode>("sun_flare");
-
- 
 
     if (getenv("COREGL_GIF_AUTOSTART"))
     {
@@ -180,13 +186,22 @@ int main(int argc, char** argv)
             if (ev.type == SDL_KEYDOWN)
             {
                 if (ev.key.keysym.sym == SDLK_ESCAPE) running = false;
+                  if (ev.key.keysym.sym == SDLK_F9)
+                    renderer.set_show_stats(!renderer.show_stats());
                 if (ev.key.keysym.sym == SDLK_F10)
                 {
                     int gw, gh;
                     app.DrawableSize(&gw, &gh);
                     app.gif.Toggle(gw, gh);
                 }
-                    if (ev.key.keysym.sym == SDLK_x)
+                if (ev.key.keysym.sym == SDLK_v)
+                {
+                    static bool on = true;
+                    on = !on;
+                    renderer.set_ssao_enabled(on);
+                    printf("SSAO: %s\n", on ? "ON" : "off");
+                }
+                if (ev.key.keysym.sym == SDLK_x)
                 {
                     static bool on = true;
                     on = !on;
@@ -214,7 +229,6 @@ int main(int argc, char** argv)
         if (keys[SDL_SCANCODE_G]) timeOfDay -= dt * 0.4f;
         Vec3 sunDir = Vec3(cosf(timeOfDay) * 0.8f, sinf(timeOfDay), 0.35f).normalized();
         renderer.set_light_dir(sunDir * -1.f);
-
 
         fly.apply(camera, dt);
         scene.update(dt);

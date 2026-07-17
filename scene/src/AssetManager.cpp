@@ -50,6 +50,11 @@ void AssetManager::release()
     clear();
 }
 
+void AssetManager::set_flip_on_lood(bool flip) 
+{
+    stbi_set_flip_vertically_on_load(flip);
+}
+
 void AssetManager::clear()
 {
     for (auto& pair : m_impl->textures)
@@ -227,6 +232,9 @@ gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool 
         return defaultTexture();
     }
 
+
+   
+
     int w = 0, h = 0, channels = 0;
     stbi_uc* pixels = stbi_load_from_memory(data.data(), (int)data.size(), &w, &h, &channels, 4);
 
@@ -247,6 +255,7 @@ gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool 
     tex->GenerateMipmaps();
     tex->SetFilter(gl::TextureFilter::LINEAR_MIPMAP_LINEAR, gl::TextureFilter::LINEAR);
     stbi_image_free(pixels);
+    gl::Log::Info("AssetManager: texture '%s' loaded from '%s' (%dx%d)", name, path, w, h);
 
     m_impl->textures[name] = tex;
     return tex;
