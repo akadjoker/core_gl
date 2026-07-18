@@ -314,4 +314,45 @@ void capsule(Mesh& out, float radius, float height, int rings, int slices)
     finish(out, verts, idx);
 }
 
+// ring in the XY plane, hole along Z: major angle theta sweeps the big
+// circle around Z, minor angle phi sweeps the tube cross-section around
+// the tangent at theta (spanned by the radial XY direction and Z itself).
+void torus(Mesh& out, float majorRadius, float minorRadius, int majorSegments, int minorSegments)
+{
+    std::vector<MeshVertex> verts;
+    std::vector<u16> idx;
+    verts.reserve((size_t)(majorSegments + 1) * (minorSegments + 1));
+
+    for (int i = 0; i <= majorSegments; ++i)
+    {
+        const float u = (float)i / (float)majorSegments;
+        const float theta = u * 2.f * kPi;
+        const Vec3 radial(cosf(theta), sinf(theta), 0.f);
+        const Vec3 center = radial * majorRadius;
+        for (int j = 0; j <= minorSegments; ++j)
+        {
+            const float v = (float)j / (float)minorSegments;
+            const float phi = v * 2.f * kPi;
+            const Vec3 n = radial * cosf(phi) + Vec3(0.f, 0.f, 1.f) * sinf(phi);
+            MeshVertex mv;
+            mv.position = center + n * minorRadius;
+            mv.normal = n;
+            mv.tangent = Vec4(1.f, 0.f, 0.f, 1.f);
+            mv.uv = Vec2(u, v);
+            verts.push_back(mv);
+        }
+    }
+    for (int i = 0; i < majorSegments; ++i)
+    {
+        for (int j = 0; j < minorSegments; ++j)
+        {
+            const u16 a = (u16)(i * (minorSegments + 1) + j);
+            const u16 b = (u16)(a + minorSegments + 1);
+            const u16 quad[6] = {a, b, (u16)(a + 1), (u16)(a + 1), b, (u16)(b + 1)};
+            idx.insert(idx.end(), quad, quad + 6);
+        }
+    }
+    finish(out, verts, idx);
+}
+
 } // namespace primitives

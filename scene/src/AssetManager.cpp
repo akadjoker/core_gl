@@ -176,6 +176,12 @@ Mesh* AssetManager::createCapsule(const char* name, float radius, float height, 
     PRIMITIVE_BODY(primitives::capsule(*m, radius, height, rings, slices));
 }
 
+Mesh* AssetManager::createTorus(const char* name, float majorRadius, float minorRadius,
+                                int majorSegments, int minorSegments)
+{
+    PRIMITIVE_BODY(primitives::torus(*m, majorRadius, minorRadius, majorSegments, minorSegments));
+}
+
 Mesh* AssetManager::createHillsPlane(const char* name, float width, float depth, int segX,
                                      int segZ, float (*heightFn)(float x, float z),
                                      float uvTiles)

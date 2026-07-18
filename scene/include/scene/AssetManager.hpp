@@ -68,6 +68,10 @@ public:
     Mesh* createCone(const char* name, float radius, float height, int slices = 24);
     Mesh* createCapsule(const char* name, float radius, float height, int rings = 8,
                         int slices = 24);
+    // ring in the XY plane, hole along local -Z (see primitives::torus) —
+    // checkpoint/gate shape
+    Mesh* createTorus(const char* name, float majorRadius, float minorRadius,
+                      int majorSegments = 24, int minorSegments = 12);
     Mesh* createHillsPlane(const char* name, float width, float depth, int segX, int segZ,
                            float (*heightFn)(float x, float z), float uvTiles = 1.f);
     // brute-force single-mesh terrain from a heightmap array (see
@@ -127,6 +131,20 @@ public:
     // same "BB3D" magic automatically (see AssetManager::loadSkinnedMesh).
     Mesh* load_b3d_mesh(const char* name, const char* path,
                        std::vector<Material*>& out_mats, const char* textureDir = "");
+
+    // Loads a static Autodesk 3D Studio (.3ds) mesh — geometry + material
+    // face-groups only, no keyframe/hierarchy chunks (see C3DSLoader.cpp
+    // for the format notes; ported from tmp/C3DSMeshFileLoader). Each
+    // object's face groups become one surface per referenced material name
+    // (faces with no TRIFACEMAT group at all fall back to a single plain
+    // default material). Vertex normals aren't stored in the format, so
+    // they're computed (smooth, via Mesh::compute_normals) after load. One
+    // Material per distinct material name, owned by the Mesh (see
+    // load_bsp_mesh's comment above) — `out_mats` is a view, not a caller
+    // owner. `textureDir` overrides where map filenames are looked up
+    // (defaults to the .3ds file's own directory).
+    Mesh* load_3ds_mesh(const char* name, const char* path,
+                        std::vector<Material*>& out_mats, const char* textureDir = "");
 
     // Extracts the isosurface (density == 0) of a volume::Source via
     // marching cubes over a regular grid spanning [from, to], with

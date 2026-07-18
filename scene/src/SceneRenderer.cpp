@@ -5,6 +5,7 @@
 #include "scene/Material.hpp"
 #include "scene/DecalSystemNode.hpp"
 #include "scene/GrassSystemNode.hpp"
+#include "scene/TreeSystemNode.hpp"
 #include "scene/OceanNode.hpp"
 #include "scene/ParticleSystemNode.hpp"
 #include "scene/RibbonTrailNode.hpp"
@@ -264,6 +265,14 @@ bool SceneRenderer::init()
     m_grass.Bind();
     m_grass.SetInt("u_tex", 0);
 
+    // tree fragment stage is identical to grass's (kGrassFS reused as-is)
+    if (!loadStage(m_tree, gl::PipelineStage::VERTEX, kTreeVS) ||
+        !loadStage(m_tree, gl::PipelineStage::FRAGMENT, kGrassFS) || !m_tree.Link())
+        return false;
+    m_locTreeViewProj = m_tree.GetLocation("u_viewProj");
+    m_tree.Bind();
+    m_tree.SetInt("u_tex", 0);
+
     // terrain splatting shader
     if (!loadStage(m_terrainShader, gl::PipelineStage::VERTEX, kTerrainVS) ||
         !loadStage(m_terrainShader, gl::PipelineStage::FRAGMENT, kTerrainFS) ||
@@ -361,6 +370,7 @@ void SceneRenderer::release()
     m_skydomeShader.Release();
     m_particle.Release();
     m_grass.Release();
+    m_tree.Release();
     m_terrainShader.Release();
     m_skinned.Release();
     m_skinnedDepth.Release();
@@ -379,6 +389,19 @@ void SceneRenderer::release()
     m_ssaoFbo.Release();
     m_ssaoColor.Release();
     m_ssaoNoise.Release();
+    m_bloomExtract.Release();
+    m_bloomDownsample.Release();
+    m_bloomBlur.Release();
+    m_bloomUpsample.Release();
+    m_bloomComposite.Release();
+    for (int i = 0; i < kBloomMips; ++i)
+    {
+        m_bloomFbo[i].Release();
+        m_bloomBlurFbo[i].Release();
+        m_bloomColor[i].Release();
+        m_bloomBlurColor[i].Release();
+        m_bloomMipW[i] = m_bloomMipH[i] = 0;
+    }
     m_postW = m_postH = 0;
     m_post_enabled = false;
     m_debug.Release();
@@ -416,7 +439,7 @@ bool SceneRenderer::enable_shadows(int cascades, int resolution, float distance)
     return true;
 }
 
-bool SceneRenderer::enable_post(bool godrays, bool ssao)
+bool SceneRenderer::enable_post(bool godrays, bool ssao, bool bloom)
 {
     if (!m_ready) return false;
 
@@ -493,9 +516,56 @@ bool SceneRenderer::enable_post(bool godrays, bool ssao)
         m_ssaoBlur.SetInt("u_color", 1);
     }
 
+    if (bloom)
+    {
+        if (!m_bloomExtract.LoadFromString(gl::PipelineStage::VERTEX,
+                                           gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_bloomExtract, gl::PipelineStage::FRAGMENT, kBloomExtractFS) ||
+            !m_bloomExtract.Link())
+            return false;
+        m_bloomExtract.Bind();
+        m_bloomExtract.SetInt("u_hdr", 0);
+        m_bloomExtract.SetFloat("u_exposure", 1.0f);
+
+        if (!m_bloomBlur.LoadFromString(gl::PipelineStage::VERTEX,
+                                        gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_bloomBlur, gl::PipelineStage::FRAGMENT, kBloomBlurFS) ||
+            !m_bloomBlur.Link())
+            return false;
+        m_bloomBlur.Bind();
+        m_bloomBlur.SetInt("u_tex", 0);
+
+        if (!m_bloomDownsample.LoadFromString(gl::PipelineStage::VERTEX,
+                                              gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_bloomDownsample, gl::PipelineStage::FRAGMENT, kBloomDownsampleFS) ||
+            !m_bloomDownsample.Link())
+            return false;
+        m_bloomDownsample.Bind();
+        m_bloomDownsample.SetInt("u_src", 0);
+
+        if (!m_bloomUpsample.LoadFromString(gl::PipelineStage::VERTEX,
+                                            gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_bloomUpsample, gl::PipelineStage::FRAGMENT, kBloomUpsampleFS) ||
+            !m_bloomUpsample.Link())
+            return false;
+        m_bloomUpsample.Bind();
+        m_bloomUpsample.SetInt("u_big", 0);
+        m_bloomUpsample.SetInt("u_small", 1);
+
+        if (!m_bloomComposite.LoadFromString(gl::PipelineStage::VERTEX,
+                                             gl::Renderer::FullscreenTriangleShaderSource()) ||
+            !loadStage(m_bloomComposite, gl::PipelineStage::FRAGMENT, kBloomCompositeFS) ||
+            !m_bloomComposite.Link())
+            return false;
+        m_bloomComposite.Bind();
+        m_bloomComposite.SetInt("u_color", 0);
+        m_bloomComposite.SetInt("u_bloom", 1);
+    }
+
     m_post_enabled = true;
     m_godrays_enabled = godrays;
     m_ssao_enabled = ssao;
+    m_bloom_enabled = bloom;
     return true;
 }
 
@@ -539,6 +609,34 @@ bool SceneRenderer::ensure_post_targets(int w, int h)
     m_ssaoFbo.AttachTexture(m_ssaoColor, gl::Attachment::COLOR0);
     m_ssaoFbo.SetDrawBuffers();
     if (!m_ssaoFbo.IsComplete()) return false;
+
+    int mw = w, mh = h;
+    for (int i = 0; i < kBloomMips; ++i)
+    {
+        mw = mw / 2 < 1 ? 1 : mw / 2;
+        mh = mh / 2 < 1 ? 1 : mh / 2;
+
+        m_bloomColor[i].Release();
+        m_bloomFbo[i].Release();
+        m_bloomColor[i].Load2D(nullptr, mw, mh, gl::TextureFormat::RGBA16F);
+        m_bloomColor[i].SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+        m_bloomColor[i].SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+        m_bloomFbo[i].AttachTexture(m_bloomColor[i], gl::Attachment::COLOR0);
+        m_bloomFbo[i].SetDrawBuffers();
+        if (!m_bloomFbo[i].IsComplete()) return false;
+
+        m_bloomBlurColor[i].Release();
+        m_bloomBlurFbo[i].Release();
+        m_bloomBlurColor[i].Load2D(nullptr, mw, mh, gl::TextureFormat::RGBA16F);
+        m_bloomBlurColor[i].SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+        m_bloomBlurColor[i].SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+        m_bloomBlurFbo[i].AttachTexture(m_bloomBlurColor[i], gl::Attachment::COLOR0);
+        m_bloomBlurFbo[i].SetDrawBuffers();
+        if (!m_bloomBlurFbo[i].IsComplete()) return false;
+
+        m_bloomMipW[i] = mw;
+        m_bloomMipH[i] = mh;
+    }
 
     m_postW = w;
     m_postH = h;
@@ -832,6 +930,14 @@ void SceneRenderer::collect_grass(Node* node, std::vector<GrassSystemNode*>& out
         collect_grass(child, out);
 }
 
+void SceneRenderer::collect_trees(Node* node, std::vector<TreeSystemNode*>& out)
+{
+    TreeSystemNode* t = node->as<TreeSystemNode>();
+    if (t) out.push_back(t);
+    for (Node* child : node->get_children())
+        collect_trees(child, out);
+}
+
 void SceneRenderer::collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out)
 {
     RibbonTrailNode* r = node->as<RibbonTrailNode>();
@@ -1039,6 +1145,37 @@ void SceneRenderer::draw_grass(const Mat4& viewProj)
     }
 }
 
+// same state/technique as draw_grass — see its own comment
+void SceneRenderer::draw_trees(const Mat4& viewProj)
+{
+    if (m_treeSystems.empty()) return;
+
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(true);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(false);
+
+    m_tree.Bind();
+    m_tree.SetMat4(m_locTreeViewProj, viewProj.x);
+
+    for (TreeSystemNode* t : m_treeSystems)
+    {
+        if (t->index_count() == 0) continue;
+        gl::Texture* tex = t->texture ? t->texture : &m_white;
+        tex->Bind(0);
+        m_tree.SetFloat("u_time", t->time());
+        m_tree.SetVec3("u_windDir", t->wind_dir().x, t->wind_dir().y, t->wind_dir().z);
+        m_tree.SetFloat("u_windStrength", t->wind_strength());
+        m_tree.SetFloat("u_windSpeed", t->wind_speed());
+        m_tree.SetFloat("u_cutout", t->cutout());
+        m_tree.SetVec3("u_lightDir", t->light_dir().x, t->light_dir().y, t->light_dir().z);
+        m_tree.SetVec3("u_lightColor", t->light_color().x, t->light_color().y, t->light_color().z);
+        m_tree.SetFloat("u_ambient", t->ambient());
+        t->mesh().vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, t->index_count());
+    }
+}
+
 // Billboards are baked in world space by each node's simulation step
 // (Scene::update -> Node3D::_update -> simulate); here we only need the
 // camera basis to orient them and a viewProj to draw. Blend mode is
@@ -1186,10 +1323,19 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     m_last_items = (int)m_items.size() + (int)m_bspInstances.size();
 
     if (v.target)
+    {
         v.target->Bind();
+        gl::Renderer::Viewport(0, 0, v.w, v.h);
+    }
     else
+    {
+        // the real screen framebuffer — offset+scaled by render_fit()'s
+        // letterbox/crop rect if it's in effect (m_outputX/Y are 0,0 and
+        // m_outputW/H are 0 for plain render(), which falls back to v.w/h)
         gl::Renderer::BindScreen();
-    gl::Renderer::Viewport(0, 0, v.w, v.h);
+        gl::Renderer::Viewport(m_outputX, m_outputY, m_outputW > 0 ? m_outputW : v.w,
+                               m_outputH > 0 ? m_outputH : v.h);
+    }
     gl::Renderer::SetDepthTest(true);
     gl::Renderer::SetDepthWrite(true);
     gl::Renderer::SetCull(gl::CullMode::BACK);
@@ -1476,6 +1622,56 @@ void SceneRenderer::build_spatial_index(Scene& scene)
     }
 }
 
+void SceneRenderer::render_fit(Scene& scene, int windowW, int windowH, int virtualW, int virtualH,
+                               ViewportFitMode mode)
+{
+    if (!m_ready) return;
+    ViewportRect r = compute_viewport_fit(windowW, windowH, virtualW, virtualH, mode);
+    m_outputX = r.x;
+    m_outputY = r.y;
+    m_outputW = r.w;
+    m_outputH = r.h;
+
+    render(scene, virtualW, virtualH);
+
+    // blacken the leftover bars (letterbox/crop) AFTER rendering, not
+    // before: draw_view()'s own internal clear (when the main view targets
+    // the real screen, i.e. post-processing off) has no scissor and clears
+    // the *whole* bound framebuffer regardless of the viewport rect — doing
+    // this first meant that clear silently wiped the bars back to
+    // m_clearColor every frame. Nothing drawn by render() above can ever
+    // land outside the viewport rect (that part of the original reasoning
+    // was right), so doing this last is always safe.
+    bool coversWindow = r.x <= 0 && r.y <= 0 && r.w >= windowW && r.h >= windowH;
+    if (!coversWindow)
+    {
+        gl::Renderer::BindScreen();
+        gl::Renderer::SetScissor(true);
+        gl::Renderer::ClearColor(0.f, 0.f, 0.f, 1.f);
+        if (r.x > 0) // pillarbox: bars left + right
+        {
+            gl::Renderer::SetScissorRect(0, 0, r.x, windowH);
+            gl::Renderer::Clear(true, false);
+            gl::Renderer::SetScissorRect(r.x + r.w, 0, windowW - (r.x + r.w), windowH);
+            gl::Renderer::Clear(true, false);
+        }
+        if (r.y > 0) // letterbox: bars top + bottom
+        {
+            gl::Renderer::SetScissorRect(0, 0, windowW, r.y);
+            gl::Renderer::Clear(true, false);
+            gl::Renderer::SetScissorRect(0, r.y + r.h, windowW, windowH - (r.y + r.h));
+            gl::Renderer::Clear(true, false);
+        }
+        gl::Renderer::SetScissor(false);
+    }
+
+    // restore so a later plain render() call (if any) isn't left offset
+    m_outputX = 0;
+    m_outputY = 0;
+    m_outputW = 0;
+    m_outputH = 0;
+}
+
 void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
 {
     if (!m_ready) return;
@@ -1613,6 +1809,10 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     collect_grass(&scene.root(), m_grassSystems);
     if (!m_grassSystems.empty()) draw_grass(proj * view);
 
+    m_treeSystems.clear();
+    collect_trees(&scene.root(), m_treeSystems);
+    if (!m_treeSystems.empty()) draw_trees(proj * view);
+
     // water surfaces draw last, depth-tested against the scene (they land
     // in whatever target the main view used)
     if (!m_waters.empty())
@@ -1716,9 +1916,82 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
             colorSrc = otherTexture(colorSrc);
         }
 
-        // filmic tonemap to the screen
+        if (m_bloom_enabled)
+        {
+            // 1) bright-pass extract, full-res source into level 0
+            m_bloomFbo[0].Bind();
+            gl::Renderer::Viewport(0, 0, m_bloomMipW[0], m_bloomMipH[0]);
+            m_bloomExtract.Bind();
+            const_cast<gl::Texture*>(colorSrc)->Bind(0);
+            m_bloomExtract.SetFloat("u_threshold", m_bloomThreshold);
+            m_bloomExtract.SetFloat("u_exposure", m_exposure);
+            gl::Renderer::DrawFullscreenTriangle();
+
+            // 2) downsample the rest of the chain, level i-1 -> level i
+            m_bloomDownsample.Bind();
+            for (int i = 1; i < kBloomMips; ++i)
+            {
+                m_bloomFbo[i].Bind();
+                gl::Renderer::Viewport(0, 0, m_bloomMipW[i], m_bloomMipH[i]);
+                m_bloomColor[i - 1].Bind(0);
+                gl::Renderer::DrawFullscreenTriangle();
+            }
+
+            // 3) blur each level in place (horizontal into the scratch
+            // buffer, vertical back into m_bloomColor[i]) — small-radius
+            // taps, but each level is already a fraction of the size of
+            // the one before, so the same taps cover proportionally more
+            // of the image the smaller the level gets
+            m_bloomBlur.Bind();
+            for (int i = 0; i < kBloomMips; ++i)
+            {
+                int mw = m_bloomMipW[i], mh = m_bloomMipH[i];
+                gl::Renderer::Viewport(0, 0, mw, mh);
+
+                m_bloomBlurFbo[i].Bind();
+                m_bloomColor[i].Bind(0);
+                m_bloomBlur.SetVec2("u_texelSize", 1.f / (float)mw, 0.f);
+                gl::Renderer::DrawFullscreenTriangle();
+
+                m_bloomFbo[i].Bind();
+                m_bloomBlurColor[i].Bind(0);
+                m_bloomBlur.SetVec2("u_texelSize", 0.f, 1.f / (float)mh);
+                gl::Renderer::DrawFullscreenTriangle();
+            }
+
+            // 4) upsample-add smallest to largest — each add samples the
+            // smaller (already-combined) level at the bigger level's UVs,
+            // which is a free bilinear upsample, into the scratch buffer
+            // that level's blur pass just finished using
+            m_bloomUpsample.Bind();
+            const gl::Texture* accum = &m_bloomColor[kBloomMips - 1];
+            for (int i = kBloomMips - 2; i >= 0; --i)
+            {
+                m_bloomBlurFbo[i].Bind();
+                gl::Renderer::Viewport(0, 0, m_bloomMipW[i], m_bloomMipH[i]);
+                m_bloomColor[i].Bind(0);
+                const_cast<gl::Texture*>(accum)->Bind(1);
+                gl::Renderer::DrawFullscreenTriangle();
+                accum = &m_bloomBlurColor[i];
+            }
+
+            // 5) additive composite back onto the full-res color chain
+            gl::FrameBuffer* dst = otherTarget(colorSrc);
+            dst->Bind();
+            gl::Renderer::Viewport(0, 0, viewport_w, viewport_h);
+            m_bloomComposite.Bind();
+            const_cast<gl::Texture*>(colorSrc)->Bind(0);
+            const_cast<gl::Texture*>(accum)->Bind(1);
+            m_bloomComposite.SetFloat("u_intensity", m_bloomIntensity);
+            gl::Renderer::DrawFullscreenTriangle();
+            colorSrc = otherTexture(colorSrc);
+        }
+
+        // filmic tonemap to the screen — offset+scaled by render_fit()'s
+        // rect if in effect, same as draw_view()'s own screen-target branch
         gl::Renderer::BindScreen();
-        gl::Renderer::Viewport(0, 0, viewport_w, viewport_h);
+        gl::Renderer::Viewport(m_outputX, m_outputY, m_outputW > 0 ? m_outputW : viewport_w,
+                               m_outputH > 0 ? m_outputH : viewport_h);
         m_tonemap.Bind();
         const_cast<gl::Texture*>(colorSrc)->Bind(0);
         m_tonemap.SetFloat("u_exposure", m_exposure);

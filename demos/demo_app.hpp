@@ -64,10 +64,12 @@ struct DemoApp
         // demos always report GL errors through gl::Log, even in release
         gl::Renderer::EnableDebugOutput();
 
-        // asset lookup works from the repo root, the build dir or build/demos
+        // asset lookup works from the repo root, the build dir, build/demos,
+        // or build/games/<name> (one level deeper than build/demos)
         fs::getFilesystem().addFolder(".");
         fs::getFilesystem().addFolder("..");
         fs::getFilesystem().addFolder("../..");
+        fs::getFilesystem().addFolder("../../..");
 
         if (getenv("COREGL_RECORD"))
         {

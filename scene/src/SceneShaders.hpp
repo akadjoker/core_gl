@@ -746,6 +746,106 @@ void main()
 }
 )";
 
+// ── bloom: bright-pass extract, downsample through a small mip chain,
+// separable gaussian blur (one horizontal pass, one vertical pass —
+// kBloomBlurFS is reused for both, the direction is baked into u_texelSize
+// by the caller) at each level, then upsample-add the chain back together
+// and additively composite onto the full-res color chain. Downsampling
+// before blurring is what gives a wide soft halo instead of a thin fuzzy
+// edge: the same handful of blur taps covers proportionally more of the
+// image at each smaller level, and every upsample (kBloomUpsampleFS
+// sampling a smaller texture at a bigger level's UVs) gets its extra
+// softness for free from the hardware's bilinear filter. ──
+static const char* kBloomExtractFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_hdr;
+uniform float u_threshold;
+uniform float u_exposure; // same exposure the tonemap applies — the
+                          // threshold is meant to mean "bright on screen",
+                          // and this buffer is still pre-exposure raw HDR
+
+void main()
+{
+    vec3 c = texture(u_hdr, v_uv).rgb * u_exposure;
+    // threshold on the brightest channel, not a per-channel subtract: the
+    // latter favors colors with more than one bright channel (yellow =
+    // R+G both near-saturated) over equally-bright single-channel colors
+    // (a pure red/blue at the same peak value), which read as "some colors
+    // just don't bloom". Scaling the whole color by how far its peak
+    // channel clears the threshold keeps the hue and treats every color
+    // the same by how bright it actually looks.
+    float peak = max(c.r, max(c.g, c.b));
+    float contribution = peak > 1e-5 ? max(peak - u_threshold, 0.0) / peak : 0.0;
+    OutColor = vec4(c * contribution, 1.0);
+}
+)";
+
+static const char* kBloomBlurFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_tex;
+uniform vec2 u_texelSize; // blur direction baked in: (1/w,0) or (0,1/h)
+
+void main()
+{
+    const float w[5] = float[](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
+    vec3 result = texture(u_tex, v_uv).rgb * w[0];
+    for (int i = 1; i < 5; ++i)
+    {
+        vec2 off = u_texelSize * float(i);
+        result += texture(u_tex, v_uv + off).rgb * w[i];
+        result += texture(u_tex, v_uv - off).rgb * w[i];
+    }
+    OutColor = vec4(result, 1.0);
+}
+)";
+
+// plain box-filtered downsample: dest is half the source's size, so a
+// single bilinear sample at the dest UV already averages a 2x2 source
+// block — cheap and good enough once the source is itself already blurred
+// or a bright-pass result (no fine detail left to alias against).
+static const char* kBloomDownsampleFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_src;
+
+void main()
+{
+    OutColor = vec4(texture(u_src, v_uv).rgb, 1.0);
+}
+)";
+
+// adds a smaller (already blurred) mip level on top of a bigger one — the
+// smaller texture sampled at the bigger level's UVs is a free bilinear
+// upsample, no separate upsample filter needed at this resolution.
+static const char* kBloomUpsampleFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_big;
+uniform sampler2D u_small;
+
+void main()
+{
+    OutColor = vec4(texture(u_big, v_uv).rgb + texture(u_small, v_uv).rgb, 1.0);
+}
+)";
+
+static const char* kBloomCompositeFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2D u_color;
+uniform sampler2D u_bloom;
+uniform float u_intensity;
+
+void main()
+{
+    vec3 color = texture(u_color, v_uv).rgb;
+    vec3 bloom = texture(u_bloom, v_uv).rgb;
+    OutColor = vec4(color + bloom * u_intensity, 1.0);
+}
+)";
+
 // ── volumetric god rays: march from the camera toward each pixel, sampling
 // the LAST shadow cascade at every step — steps the sun can reach add
 // in-scattered light, weighted by a Henyey-Greenstein phase function (bright
@@ -1244,6 +1344,37 @@ void main()
     float ndl = max(dot(vec3(0.0, 1.0, 0.0), -normalize(u_lightDir)), 0.0);
     vec3 c = t.rgb * (u_ambient + (ndl * 0.5 + 0.5) * u_lightColor * 0.7);
     OutColor = vec4(c, 1.0);
+}
+)";
+
+// ── trees: same wind-sway/alpha-cutout technique as grass, but the tree's
+// texture is usually an atlas (see TreeSystemNode::set_atlas_grid), so
+// uv.y is a real texture coordinate inside whatever cell a tree picked,
+// not a 0..1 local blade height — the height fraction rides the otherwise-
+// unused a_normal.x instead (TreeSystemNode::addQuad sets it directly;
+// this shader never treats it as a lighting normal). Fragment stage is
+// identical to grass's (kGrassFS) — reused as-is, no separate copy. ──
+static const char* kTreeVS = R"(
+layout(location = 0) in vec3 a_pos;
+layout(location = 1) in vec3 a_normal; // repurposed: x = local height, 0 base / 1 tip
+layout(location = 2) in vec4 a_colorAsTangent;
+layout(location = 3) in vec2 a_uv;
+uniform mat4 u_viewProj;
+uniform float u_time;
+uniform vec3 u_windDir;
+uniform float u_windStrength;
+uniform float u_windSpeed;
+out vec2 v_uv;
+out vec4 v_color;
+void main()
+{
+    v_uv = a_uv;
+    v_color = a_colorAsTangent;
+    float h = a_normal.x;
+    float phase = a_pos.x * 0.15 + a_pos.z * 0.15;
+    float s = sin(u_time * u_windSpeed + phase);
+    vec3 p = a_pos + u_windDir * (s * u_windStrength * h * h); // h^2: only the canopy sways
+    gl_Position = u_viewProj * vec4(p, 1.0);
 }
 )";
 

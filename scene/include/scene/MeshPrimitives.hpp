@@ -34,4 +34,11 @@ void cone(Mesh& out, float radius, float height, int slices = 24);
 // two hemisphere caps) capped by hemispheres of `radius` — total height is
 // height + 2*radius, base at y=0
 void capsule(Mesh& out, float radius, float height, int rings = 8, int slices = 24);
+// torus centered at the origin, ring in the XY plane, hole facing along Z —
+// so with no extra rotation it already stands as a gate/checkpoint you fly
+// through along the node's local forward axis (-Z, same as everything
+// else — see Node3D::forward()). majorRadius = center of the tube to the
+// ring's center; minorRadius = tube thickness.
+void torus(Mesh& out, float majorRadius, float minorRadius, int majorSegments = 24,
+          int minorSegments = 12);
 } // namespace primitives

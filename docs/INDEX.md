@@ -33,7 +33,8 @@ batch.Render();
 - **[Architecture](ARCHITECTURE.md)** — State cache, uniform cache, lifetime management
 - **[Tests](TESTS.md)** — Available tests and how to run them
 - **[Batch Shapes](BATCH_SHAPES.md)** — Catalog of 2D and 3D drawing primitives
- 
+- **[Scene Nodes](SCENE.md)** — Node hierarchy, scene graph, rendering pipeline, VFX, terrain, CSG, behaviors, math library
+
 ## Supported Platforms
 
 | Target        | API           | Status                                  |

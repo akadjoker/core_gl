@@ -80,10 +80,14 @@ public:
     void Cylinder(f32 cx, f32 cy, f32 cz, f32 radius, f32 height, int slices = 24);
     void Capsule(f32 cx, f32 cy, f32 cz, f32 radius, f32 height, int rings = 6, int slices = 24);
 
-    // textured quad; the sub-rect overload takes pixel coords into the texture
-    void Quad(const Texture& tex, f32 x, f32 y, f32 w, f32 h);
-    void Quad(const Texture& tex, f32 srcX, f32 srcY, f32 srcW, f32 srcH, f32 x, f32 y, f32 w,
-              f32 h);
+    // textured quad; the sub-rect overload takes pixel coords into the
+    // texture. flipX/flipY mirror the UVs in place (e.g. a minimap texture
+    // authored with a different row order than the world-space mapping
+    // you're drawing it against) — cheaper and clearer than pre-flipping
+    // the source image or juggling negative w/h.
+    void Quad(const Texture& tex, f32 x, f32 y, f32 w, f32 h, bool flipX = false, bool flipY = false);
+    void Quad(const Texture& tex, f32 srcX, f32 srcY, f32 srcW, f32 srcH, f32 x, f32 y, f32 w, f32 h,
+              bool flipX = false, bool flipY = false);
 
     // text with the embedded 8x8 font (ASCII 32..127, '\n' supported);
     // size = glyph height in world/pixel units, uses the current color

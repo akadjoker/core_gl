@@ -27,10 +27,12 @@ add_library(scene STATIC
     src/ParticleSystemNode.cpp
     src/DecalSystemNode.cpp
     src/GrassSystemNode.cpp
+    src/TreeSystemNode.cpp
     src/RibbonTrailNode.cpp
     src/Tree.cpp
     src/SceneOctree.cpp
     src/Collision.cpp
+    src/MeshCollision.cpp
     src/LensFlareNode.cpp
     src/ByteArray.cpp
     src/IO.cpp
@@ -47,6 +49,7 @@ add_library(scene STATIC
     src/GLTFLoader.cpp
     src/B3DLoader.cpp
     src/IQMLoader.cpp
+    src/C3DSLoader.cpp
     src/Input.cpp
     src/Behavior.cpp
     src/FreeFlyBehavior.cpp

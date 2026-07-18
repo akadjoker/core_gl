@@ -3,6 +3,7 @@
 #include "gl_platform.hpp"
 #include "gl_state.hpp"
 #include "gl_font_data.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -1100,30 +1101,36 @@ void Batch::Capsule(f32 cx, f32 cy, f32 cz, f32 radius, f32 height, int rings, i
 // textured quads and text
 // ---------------------------------------------------------------------------
 
-void Batch::Quad(const Texture& tex, f32 x, f32 y, f32 w, f32 h)
+void Batch::Quad(const Texture& tex, f32 x, f32 y, f32 w, f32 h, bool flipX, bool flipY)
 {
+    f32 u0 = 0.f, u1 = 1.f, v0 = 0.f, v1 = 1.f;
+    if (flipX) { u0 = 1.f; u1 = 0.f; }
+    if (flipY) { v0 = 1.f; v1 = 0.f; }
+
     SetTexture(&tex);
     SetMode(RenderPrimitive::TRIANGLES);
     Vertex* v;
     u16* idx;
     u32 base;
     if (!reserve(4, 6, v, idx, base)) return;
-    v[0] = {x, y, 0.f, 0.f, 0.f, curColor};
-    v[1] = {x, y + h, 0.f, 0.f, 1.f, curColor};
-    v[2] = {x + w, y + h, 0.f, 1.f, 1.f, curColor};
-    v[3] = {x + w, y, 0.f, 1.f, 0.f, curColor};
+    v[0] = {x, y, 0.f, u0, v0, curColor};
+    v[1] = {x, y + h, 0.f, u0, v1, curColor};
+    v[2] = {x + w, y + h, 0.f, u1, v1, curColor};
+    v[3] = {x + w, y, 0.f, u1, v0, curColor};
     quadIndices(idx, base);
     applyTransform(v, 4);
 }
 
 void Batch::Quad(const Texture& tex, f32 srcX, f32 srcY, f32 srcW, f32 srcH, f32 x, f32 y, f32 w,
-                 f32 h)
+                 f32 h, bool flipX, bool flipY)
 {
     const f32 tw = (f32)tex.GetWidth();
     const f32 th = (f32)tex.GetHeight();
     if (tw <= 0.f || th <= 0.f) return;
-    const f32 u0 = srcX / tw, v0 = srcY / th;
-    const f32 u1 = (srcX + srcW) / tw, v1 = (srcY + srcH) / th;
+    f32 u0 = srcX / tw, v0 = srcY / th;
+    f32 u1 = (srcX + srcW) / tw, v1 = (srcY + srcH) / th;
+    if (flipX) std::swap(u0, u1);
+    if (flipY) std::swap(v0, v1);
 
     SetTexture(&tex);
     SetMode(RenderPrimitive::TRIANGLES);

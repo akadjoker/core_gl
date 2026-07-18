@@ -3,6 +3,7 @@
 #include "scene/Math.hpp"
 #include "scene/Scene.hpp"
 #include "scene/SceneOctree.hpp"
+#include "scene/ViewportFit.hpp"
 #include <coregl/gl_batch.hpp>
 #include <coregl/gl_framebuffer.hpp>
 #include <coregl/gl_shader.hpp>
@@ -20,6 +21,7 @@ class LightNode;
 class ParticleSystemNode;
 class DecalSystemNode;
 class GrassSystemNode;
+class TreeSystemNode;
 class RibbonTrailNode;
 class TerrainPagingNode;
 class SkinnedMeshInstance;
@@ -82,8 +84,12 @@ public:
     // tonemap. With ssao on, a hemisphere-kernel ambient occlusion pass
     // darkens contact creases (corners, where objects meet the floor) before
     // godrays — normals are reconstructed from the depth buffer, no G-buffer
-    // needed. Call after init().
-    bool enable_post(bool godrays = true, bool ssao = true);
+    // needed. With bloom on, pixels brighter than the threshold are
+    // extracted, blurred (separable: one horizontal pass then one vertical
+    // pass, at half resolution — cheap, and a single 9-tap gaussian each way
+    // already looks soft since it runs twice) and added back on top, after
+    // godrays so the sun's in-scattered light blooms too. Call after init().
+    bool enable_post(bool godrays = true, bool ssao = true, bool bloom = true);
     void set_exposure(float e) { m_exposure = e; }
     // debug: toggle SSAO at runtime without reallocating its targets
     void set_ssao_enabled(bool on) { m_ssao_enabled = on; }
@@ -93,6 +99,17 @@ public:
     {
         m_ssaoRadius = radius;
         m_ssaoStrength = strength;
+    }
+    // debug: toggle bloom at runtime without reallocating its targets
+    void set_bloom_enabled(bool on) { m_bloom_enabled = on; }
+    // threshold: HDR brightness (post-exposure... no, pre-exposure, same
+    // units as the scene's own HDR values) above which a pixel starts
+    // contributing to the glow. intensity: how much of the blurred result
+    // gets added back on top of the sharp image.
+    void set_bloom_params(float threshold, float intensity)
+    {
+        m_bloomThreshold = threshold;
+        m_bloomIntensity = intensity;
     }
 
     // ── directional-light shadows (CSM) ──
@@ -118,6 +135,17 @@ public:
     // main view from the scene's active camera. viewport_w/h set the camera
     // aspect and the GL viewport.
     void render(Scene& scene, int viewport_w, int viewport_h);
+
+    // like render(), but the camera renders at a fixed virtual resolution
+    // (virtualW/virtualH — this is what drives the camera aspect, exactly
+    // like viewport_w/h above) regardless of the actual window size
+    // (windowW/windowH), fit into it per `mode` (see scene/ViewportFit.hpp):
+    // Stretch fills the window and distorts, Letterbox fits inside it with
+    // black bars, Crop covers it with the overflow clipped. Composition
+    // stays identical across window sizes/aspects — only how much of the
+    // window shows it (and how much is bars) changes.
+    void render_fit(Scene& scene, int windowW, int windowH, int virtualW, int virtualH,
+                    ViewportFitMode mode = ViewportFitMode::Letterbox);
 
     // draws the extra views (water reflection/refraction) as corner overlays
     // — visual proof of what each pass produced
@@ -197,6 +225,8 @@ private:
     static void collect_decals(Node* node, std::vector<DecalSystemNode*>& out);
     void draw_grass(const Mat4& viewProj);
     static void collect_grass(Node* node, std::vector<GrassSystemNode*>& out);
+    void draw_trees(const Mat4& viewProj);
+    static void collect_trees(Node* node, std::vector<TreeSystemNode*>& out);
     void draw_ribbontrails(const Mat4& viewProj);
     static void collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out);
     // splat-mode paged terrain, drawn inside every view (reflections too)
@@ -307,6 +337,12 @@ private:
     gl::Shader m_grass;
     gl::i32 m_locGViewProj = -1;
     std::vector<GrassSystemNode*> m_grassSystems;       // reused across frames
+
+    // trees: same technique as grass (own shader: atlas-aware, see
+    // kTreeVS in SceneShaders.hpp), separate node/system/tuning
+    gl::Shader m_tree;
+    gl::i32 m_locTreeViewProj = -1;
+    std::vector<TreeSystemNode*> m_treeSystems;         // reused across frames
     std::vector<RibbonTrailNode*> m_ribbonTrails;       // reused across frames
     std::vector<TerrainPagingNode*> m_pagedTerrains;    // reused across frames
     std::vector<SkinnedMeshInstance*> m_skinnedMeshes;   // reused across frames
@@ -347,9 +383,49 @@ private:
     // depth-derivative path for their pixels.
     gl::Texture m_hdrNormal;
     int m_postW = 0, m_postH = 0;
+
+    // set only during render_fit(): where the actual screen framebuffer's
+    // viewport is offset to (letterbox/crop) and, since that rect is
+    // scaled up/down from the virtual render resolution, how big it
+    // actually is on screen — every internal pass that targets an
+    // offscreen FBO stays at (0,0,virtualW,virtualH) as usual, only the
+    // couple of passes that draw straight to the window (draw_view when
+    // v.target is null, and the post chain's final tonemap-to-screen)
+    // need the fitted size, otherwise they'd blit the HDR/backbuffer
+    // texture into a same-size unscaled viewport instead of stretching it
+    // to fill the fitted rect. render() (the plain entry point) leaves
+    // m_outputW/H at 0, which the two blit sites treat as "use the
+    // passed-in virtual size", so every existing caller is unaffected.
+    int m_outputX = 0, m_outputY = 0;
+    int m_outputW = 0, m_outputH = 0;
     bool m_post_enabled = false;
     bool m_godrays_enabled = false;
     float m_exposure = 3.4f;
+
+    // bloom: bright-pass extract at half-res, then a small mip chain
+    // (each level half the previous) — a single small-radius gaussian blur
+    // per level looks like a thin edge glow, not a soft halo, because it
+    // can't reach far in pixel terms; downsampling first means the same
+    // handful of taps covers a much bigger fraction of the image at each
+    // level. Each level is blurred (separable: horizontal then vertical),
+    // then the chain is summed back together smallest-to-largest — each
+    // upsample is just sampling the smaller texture at the bigger level's
+    // UVs, so the hardware's bilinear filter does the upsample for free.
+    // The level-0-sized combined result is what gets composited onto the
+    // full-res color chain.
+    static const int kBloomMips = 4;
+    gl::Shader m_bloomExtract, m_bloomDownsample, m_bloomBlur, m_bloomUpsample, m_bloomComposite;
+    // m_bloomColor[i]: level i's image — extract/downsample writes it, then
+    // the blur pass ends by writing the blurred result back into it too, so
+    // after the blur step it always means "level i, blurred". m_bloomBlurFbo/
+    // Color[i] is scratch: the blur's horizontal-pass target, then reused as
+    // the upsample-add pass's output target on the way back down the chain.
+    gl::FrameBuffer m_bloomFbo[kBloomMips], m_bloomBlurFbo[kBloomMips];
+    gl::Texture m_bloomColor[kBloomMips], m_bloomBlurColor[kBloomMips];
+    int m_bloomMipW[kBloomMips] = {}, m_bloomMipH[kBloomMips] = {};
+    bool m_bloom_enabled = false;
+    float m_bloomThreshold = 1.0f;
+    float m_bloomIntensity = 0.6f;
 
     // ssao: raw hemisphere-kernel AO into m_ssaoColor, then blurred+composited
     // straight into the ping-pong color chain (see render())
