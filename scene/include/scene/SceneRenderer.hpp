@@ -23,6 +23,7 @@ class DecalSystemNode;
 class GrassSystemNode;
 class TreeSystemNode;
 class RibbonTrailNode;
+class BillboardNode;
 class TerrainPagingNode;
 class SkinnedMeshInstance;
 
@@ -229,6 +230,8 @@ private:
     static void collect_trees(Node* node, std::vector<TreeSystemNode*>& out);
     void draw_ribbontrails(const Mat4& viewProj);
     static void collect_ribbontrails(Node* node, std::vector<RibbonTrailNode*>& out);
+    void draw_billboards(const Mat4& viewProj);
+    static void collect_billboards(Node* node, std::vector<BillboardNode*>& out);
     // splat-mode paged terrain, drawn inside every view (reflections too)
     void draw_paged_terrain(const RenderView& v, const Frustum& frustum);
     // GPU-skinned characters (kSkinnedVS + the forward FS)
@@ -344,6 +347,7 @@ private:
     gl::i32 m_locTreeViewProj = -1;
     std::vector<TreeSystemNode*> m_treeSystems;         // reused across frames
     std::vector<RibbonTrailNode*> m_ribbonTrails;       // reused across frames
+    std::vector<BillboardNode*> m_billboards;           // reused across frames
     std::vector<TerrainPagingNode*> m_pagedTerrains;    // reused across frames
     std::vector<SkinnedMeshInstance*> m_skinnedMeshes;   // reused across frames
 

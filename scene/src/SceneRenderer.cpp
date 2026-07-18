@@ -8,6 +8,7 @@
 #include "scene/TreeSystemNode.hpp"
 #include "scene/OceanNode.hpp"
 #include "scene/ParticleSystemNode.hpp"
+#include "scene/BillboardNode.hpp"
 #include "scene/RibbonTrailNode.hpp"
 #include "scene/TerrainPagingNode.hpp"
 #include "scene/SkinnedMesh.hpp"
@@ -946,6 +947,14 @@ void SceneRenderer::collect_ribbontrails(Node* node, std::vector<RibbonTrailNode
         collect_ribbontrails(child, out);
 }
 
+void SceneRenderer::collect_billboards(Node* node, std::vector<BillboardNode*>& out)
+{
+    BillboardNode* b = node->as<BillboardNode>();
+    if (b) out.push_back(b);
+    for (Node* child : node->get_children())
+        collect_billboards(child, out);
+}
+
 void SceneRenderer::collect_paged_terrain(Node* node, std::vector<TerrainPagingNode*>& out)
 {
     TerrainPagingNode* t = node->as<TerrainPagingNode>();
@@ -1258,6 +1267,39 @@ void SceneRenderer::draw_ribbontrails(const Mat4& viewProj)
         tex->Bind(0);
         rt->quad_mesh().vao().Bind();
         gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, rt->index_count());
+    }
+
+    gl::Renderer::SetBlend(false);
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(true);
+}
+
+// Billboards reuse the particle shader too (same vertex layout). Each one
+// is a single quad rebuilt every frame in rebuild() with its own
+// view-mode/atlas-rect choice, drawn with its own texture/blend/depth-test.
+void SceneRenderer::draw_billboards(const Mat4& viewProj)
+{
+    if (m_billboards.empty()) return;
+
+    gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(true);
+
+    m_particle.Bind();
+    m_particle.SetMat4(m_locPViewProj, viewProj.x);
+
+    for (BillboardNode* b : m_billboards)
+    {
+        gl::Renderer::SetDepthTest(b->depthTest);
+        if (b->blend == ParticleBlendMode::Additive)
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE);
+        else
+            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                          gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+        gl::Texture* tex = b->texture ? b->texture : &m_white;
+        tex->Bind(0);
+        b->quad_mesh().vao().Bind();
+        gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, 6);
     }
 
     gl::Renderer::SetBlend(false);
@@ -1827,16 +1869,23 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     collect_decals(&scene.root(), m_decalSystems);
     m_ribbonTrails.clear();
     collect_ribbontrails(&scene.root(), m_ribbonTrails);
-    if (!m_particleSystems.empty() || !m_decalSystems.empty() || !m_ribbonTrails.empty())
+    m_billboards.clear();
+    collect_billboards(&scene.root(), m_billboards);
+    if (!m_particleSystems.empty() || !m_decalSystems.empty() || !m_ribbonTrails.empty() ||
+        !m_billboards.empty())
     {
         Vec3 camRight = Mat4(camera->get_global_rotation()) * Vec3(1.f, 0.f, 0.f);
         Vec3 camUp = Mat4(camera->get_global_rotation()) * Vec3(0.f, 1.f, 0.f);
+        Vec3 camForward = Mat4(camera->get_global_rotation()) * Vec3(0.f, 0.f, -1.f);
         for (ParticleSystemNode* ps : m_particleSystems)
             ps->build_billboards(camRight, camUp);
         for (RibbonTrailNode* rt : m_ribbonTrails)
             rt->rebuild(cameraPos, camUp);
+        for (BillboardNode* b : m_billboards)
+            b->rebuild(camRight, camUp, camForward);
         draw_particles(proj * view);
         draw_ribbontrails(proj * view);
+        draw_billboards(proj * view);
     }
 
     // lens flares: screen-space, additive, on top of everything

@@ -34,6 +34,7 @@ enum NodeType : unsigned short
     NT_LENSFLARE,
     NT_BSPINSTANCE,
     NT_TAGATTACHMENT,
+    NT_BILLBOARD,
 
     NT_COUNT
 };

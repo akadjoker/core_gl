@@ -29,6 +29,7 @@ add_library(scene STATIC
     src/GrassSystemNode.cpp
     src/TreeSystemNode.cpp
     src/RibbonTrailNode.cpp
+    src/BillboardNode.cpp
     src/Tree.cpp
     src/SceneOctree.cpp
     src/Collision.cpp
