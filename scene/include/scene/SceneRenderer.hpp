@@ -26,6 +26,7 @@ class RibbonTrailNode;
 class BillboardNode;
 class TerrainPagingNode;
 class SkinnedMeshInstance;
+class MeshInstance;
 
 // Draws a Scene. This is the engine-side boundary: game code builds the node
 // tree and calls render() — it never touches coregl directly.
@@ -131,6 +132,16 @@ public:
     // debug: wireframe box per SceneOctree node (leaf + internal) that
     // currently holds at least one instance — visualize the culling split
     void set_show_octree_debug(bool on) { m_show_octree_debug = on; }
+    // debug: wireframe box per MeshInstance, its own world-transformed
+    // Mesh::bounds() — "is this thing actually where/how big I think it
+    // is" without guessing from the lit result (an empty/degenerate bounds
+    // is a common reason a mesh silently never draws — the box would show
+    // up as a single point or nothing at all, an immediate tell).
+    void set_show_mesh_bounds(bool on) { m_show_mesh_bounds = on; }
+    // debug: glPolygonMode(GL_LINE) over the main opaque pass — draws the
+    // real triangle edges of whatever's bound, no extra geometry needed.
+    // Desktop GL only (see gl::Renderer::SetWireframe).
+    void set_wireframe(bool on) { m_wireframe = on; }
 
     // one full frame: extra views (water reflection/refraction), then the
     // main view from the scene's active camera. viewport_w/h set the camera
@@ -192,6 +203,8 @@ private:
     void draw_light_gizmos(const Mat4& viewProj);
     void draw_octree_debug(const Mat4& viewProj);
     static void collect_octree_bounds(const SceneOctreeNode* node, std::vector<const SceneOctreeNode*>& out);
+    void draw_mesh_bounds_debug(Node& root, const Mat4& viewProj);
+    static void collect_mesh_instances(Node* node, std::vector<MeshInstance*>& out);
     // one rendering of the scene into one target
     struct RenderView
     {
@@ -473,6 +486,8 @@ private:
     bool m_gizmoBatchReady = false;
     bool m_show_light_gizmos = false;
     bool m_show_octree_debug = false;
+    bool m_show_mesh_bounds = false;
+    bool m_wireframe = false;
     bool m_show_stats = false;
     gl::u64 m_lastFrameNs = 0; // render()-to-render() clock for the fps line
     float m_smoothMs = 0.f;    // exponentially smoothed frame time

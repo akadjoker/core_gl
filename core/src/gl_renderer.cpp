@@ -84,6 +84,7 @@ struct State
     bool polygonOffset = false;
     f32 polygonOffsetFactor = 0.f;
     f32 polygonOffsetUnits = 0.f;
+    bool wireframe = false;
 
     bool clipDistance[8] = {};
 
@@ -478,6 +479,16 @@ void Renderer::SetPolygonOffset(bool enable, f32 factor, f32 units)
         glPolygonOffset(factor, units);
         ++s.stats.stateChanges;
     }
+}
+
+void Renderer::SetWireframe(bool enable)
+{
+    if (enable == s.wireframe) return;
+    s.wireframe = enable;
+#if !defined(CORE_GL_ES)
+    glPolygonMode(GL_FRONT_AND_BACK, enable ? GL_LINE : GL_FILL);
+    ++s.stats.stateChanges;
+#endif
 }
 
 void Renderer::SetClipDistance(u32 index, bool enable)

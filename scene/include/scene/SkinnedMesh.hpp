@@ -101,6 +101,12 @@ private:
     bool load_iqm(const char* path);
     bool load_animations_iqm(const char* path);
 
+    // MilkShape3D (.ms3d, "MS3D000000" magic) dispatch targets — animated/
+    // skeletal path (see MS3DLoader.cpp). For a static .ms3d with no
+    // bones, use AssetManager::load_ms3d_mesh() instead.
+    bool load_ms3d(const char* path);
+    bool load_animations_ms3d(const char* path);
+
     Mesh m_mesh;
     Skeleton m_skeleton;
     std::vector<AnimationClip*> m_clips; // owned

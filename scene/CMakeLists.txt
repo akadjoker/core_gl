@@ -34,6 +34,7 @@ add_library(scene STATIC
     src/SceneOctree.cpp
     src/Collision.cpp
     src/MeshCollision.cpp
+    src/World.cpp
     src/LensFlareNode.cpp
     src/ByteArray.cpp
     src/IO.cpp
@@ -51,6 +52,7 @@ add_library(scene STATIC
     src/B3DLoader.cpp
     src/IQMLoader.cpp
     src/C3DSLoader.cpp
+    src/MS3DLoader.cpp
     src/Input.cpp
     src/Behavior.cpp
     src/FreeFlyBehavior.cpp

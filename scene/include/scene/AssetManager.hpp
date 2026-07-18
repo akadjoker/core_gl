@@ -146,6 +146,18 @@ public:
     Mesh* load_3ds_mesh(const char* name, const char* path,
                         std::vector<Material*>& out_mats, const char* textureDir = "");
 
+    // Loads a static MilkShape3D (.ms3d) mesh — geometry only, no skeleton
+    // or animation (the joints/keyframes chunk, if present, is skipped —
+    // see MS3DLoader.cpp for the format notes). One Material per MS3D
+    // material (or a single default if the file declares none), owned by
+    // the Mesh (see load_bsp_mesh's comment above) — `out_mats` is a view,
+    // not a caller owner. For animated .ms3d (joints + keyframes) use
+    // SkinnedMesh::load()/load_animations() instead, which recognizes the
+    // same "MS3D000000" magic automatically (see
+    // AssetManager::loadSkinnedMesh).
+    Mesh* load_ms3d_mesh(const char* name, const char* path,
+                         std::vector<Material*>& out_mats, const char* textureDir = "");
+
     // Extracts the isosurface (density == 0) of a volume::Source via
     // marching cubes over a regular grid spanning [from, to], with
     // voxelSize-sized cubes — see scene/VolumeSource.hpp/VolumeCSGSource.hpp

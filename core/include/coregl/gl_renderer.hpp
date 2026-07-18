@@ -79,6 +79,10 @@ public:
 
     // Polygon offset (shadow map bias)
     static void SetPolygonOffset(bool enable, f32 factor = 0.f, f32 units = 0.f);
+    // Wireframe: glPolygonMode(GL_LINE) — draws whatever's already bound
+    // (no separate line geometry needed) as edges instead of filled faces.
+    // Desktop GL only; a no-op on ES (glPolygonMode doesn't exist there).
+    static void SetWireframe(bool enable);
 
     // User clip plane toggle (index 0..7). The plane equation itself is a
     // shader uniform: the vertex stage writes gl_ClipDistance[index] and

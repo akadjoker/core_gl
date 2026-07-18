@@ -11,6 +11,7 @@
 #include "scene/BillboardNode.hpp"
 #include "scene/RibbonTrailNode.hpp"
 #include "scene/TerrainPagingNode.hpp"
+#include "scene/MeshInstance.hpp"
 #include "scene/SkinnedMesh.hpp"
 #include "scene/SkinnedMeshInstance.hpp"
 #include "scene/BspInstance.hpp"
@@ -1845,7 +1846,9 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     main_view.w = viewport_w;
     main_view.h = viewport_h;
     main_view.cam_pos = cameraPos;
+    if (m_wireframe) gl::Renderer::SetWireframe(true);
     draw_view(scene, main_view);
+    if (m_wireframe) gl::Renderer::SetWireframe(false);
 
     m_grassSystems.clear();
     collect_grass(&scene.root(), m_grassSystems);
@@ -2052,6 +2055,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
 
     if (m_show_light_gizmos) draw_light_gizmos(proj * view);
     if (m_show_octree_debug) draw_octree_debug(proj * view);
+    if (m_show_mesh_bounds) draw_mesh_bounds_debug(scene.root(), proj * view);
 
     // snapshot BEFORE the stats panel draws, so the panel reports the
     // scene's cost, not its own
@@ -2197,6 +2201,52 @@ void SceneRenderer::collect_octree_bounds(const SceneOctreeNode* node,
     if (!node->entries.empty()) out.push_back(node);
     for (int i = 0; i < 8; ++i)
         collect_octree_bounds(node->children[i], out);
+}
+
+void SceneRenderer::collect_mesh_instances(Node* node, std::vector<MeshInstance*>& out)
+{
+    MeshInstance* m = node->as<MeshInstance>();
+    if (m) out.push_back(m);
+    for (Node* child : node->get_children())
+        collect_mesh_instances(child, out);
+}
+
+// wireframe box per MeshInstance — its Mesh::bounds() (local space)
+// transformed into world space by the instance's own transform, same
+// technique culling itself uses. One fixed color (unlike the octree debug's
+// depth tint): the point here is "where/how big is this thing", not a
+// hierarchy to read.
+void SceneRenderer::draw_mesh_bounds_debug(Node& root, const Mat4& viewProj)
+{
+    if (!m_gizmoBatchReady)
+    {
+        if (!m_gizmoBatch.Init()) return;
+        m_gizmoBatchReady = true;
+    }
+
+    std::vector<MeshInstance*> instances;
+    collect_mesh_instances(&root, instances);
+    if (instances.empty()) return;
+
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(false);
+
+    m_gizmoBatch.SetProjection(viewProj.x);
+    m_gizmoBatch.LoadIdentity();
+    m_gizmoBatch.SetMode(gl::RenderPrimitive::LINES);
+    m_gizmoBatch.SetColor(60, 220, 255, 220);
+
+    for (MeshInstance* inst : instances)
+    {
+        Mesh* mesh = inst->get_mesh();
+        if (!mesh) continue;
+        BoundingBox wb = BoundingBox::TransformBoundingBox(mesh->bounds(), inst->get_world_matrix());
+        Vec3 c = wb.center();
+        Vec3 sz = wb.max - wb.min;
+        m_gizmoBatch.CubeWire(c.x, c.y, c.z, sz.x, sz.y, sz.z);
+    }
+
+    m_gizmoBatch.Render();
 }
 
 // wireframe box per SceneOctree node holding at least one instance — depth

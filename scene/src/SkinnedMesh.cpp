@@ -226,6 +226,12 @@ bool SkinnedMesh::load(const char* meshPath)
         if (magic == 0x44334242u) return load_b3d(meshPath);
         // IQM: 16-byte "INTERQUAKEMODEL\0" magic — the first 4 bytes are "INTE".
         if (magic == 0x45544E49u) return load_iqm(meshPath);
+        // MS3D: 10-byte ASCII "MS3D000000" magic — the first 4 bytes are
+        // "MS3D", built from char literals (not a hand-computed LE hex
+        // constant) to avoid a byte-order mistake.
+        const gl::u32 kMS3DMagic =
+            (gl::u32)'M' | ((gl::u32)'S' << 8) | ((gl::u32)'3' << 16) | ((gl::u32)'D' << 24);
+        if (magic == kMS3DMagic) return load_ms3d(meshPath);
         gl::Log::Error("SkinnedMesh: '%s' is not a mesh file", meshPath);
         return false;
     }
@@ -306,6 +312,9 @@ bool SkinnedMesh::load_animations(const char* animPath)
         if (magic == 0x46546C67u || (magic & 0xFFu) == '{') return load_animations_gltf(animPath);
         if (magic == 0x44334242u) return load_animations_b3d(animPath);
         if (magic == 0x45544E49u) return load_animations_iqm(animPath);
+        const gl::u32 kMS3DMagic =
+            (gl::u32)'M' | ((gl::u32)'S' << 8) | ((gl::u32)'3' << 16) | ((gl::u32)'D' << 24);
+        if (magic == kMS3DMagic) return load_animations_ms3d(animPath);
         gl::Log::Error("SkinnedMesh: '%s' is not an anim file", animPath);
         return false;
     }
