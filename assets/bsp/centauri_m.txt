@@ -1,0 +1,60 @@
+
+Title:            Centauri Montes (It's a mountainous region on Mars)
+File:             centauri_m.pk3
+Author:           M00nbot 
+Email address:    guarionex758@gmail.com             
+Description:      FFA map for Quake III and OpenArena
+
+============================================================
+Play information
+
+Tourney:          no
+Deathmatch:       yes
+Team deathmatch:  no
+CTF:              no
+Bot File (aas):   yes
+other:            no
+new sounds:       yes
+new graphics:     yes
+new music:        no
+
+How to play:      place centauri_m.pk3 in your /baseq3/ folder
+                  start quake3
+                  hit ~
+                  type \map centauri_m
+                  type \addbot <botname> <skill>
+
+                  hit ~ (to clear the console)
+                 
+                  OR select centauri_m from the skrimish menu 
+============================================================
+Info
+
+Custom textures.
+
+Skybox ( dust ) From Kothic Skybox Compilation by Kell 5th September 2004
+
+Downloaded from: https://www.quaddicted.com/webarchive/kell.quaddicted.com/skyboxes.html 
+
+Some members of the American Association For The Preservation of Quake III bots were very concern with the amount of bot casualties created by the spinning platform in the middle.So i told them relax, they will respawn.
+
+
+
+============================================================
+Construction
+
+editor:         gtkradiant 1.6.6   :https://icculus.org/gtkradiant/
+other progs:    Photoshop CS
+know bugs:      none known
+build time:     About a week...maybe?
+
+============================================================
+Distribution / Copyright / Permissions 
+
+Quake III Arena is a registered trademark of id Software, Inc.
+
+This level may be electronically distributed only at NO
+CHARGE to the recipient in its current state, MUST include
+this .txt file, and may NOT be modified IN ANY WAY.  
+
+============================================================

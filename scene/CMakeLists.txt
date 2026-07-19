@@ -70,6 +70,7 @@ add_library(scene STATIC
     src/VolumeMesher.cpp
     src/stb_impl.cpp
     src/cgltf_impl.cpp
+    src/miniz_impl.cpp
 )
 
 target_include_directories(scene

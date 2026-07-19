@@ -6,10 +6,15 @@
 #include "scene/Mesh.hpp"
 #include "scene/Material.hpp"
 #include "scene/AssetManager.hpp"
+#include "scene/BspInstance.hpp"
 #include "scene/Math.hpp"
 #include "scene/Filesystem.hpp"
 #include "coregl/gl_log.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -22,9 +27,17 @@ namespace
 constexpr int kQ3Ident = 1347633737; // "IBSP"
 constexpr int kQ3Version = 46;       // Quake 3
 constexpr int kNumLumps = 17;
+constexpr int kLumpEntities = 0;
 constexpr int kLumpTextures = 1;
+constexpr int kLumpPlanes = 2;
+constexpr int kLumpNodes = 3;
+constexpr int kLumpLeafs = 4;
+constexpr int kLumpLeafBrushes = 6;
+constexpr int kLumpModels = 7;
 constexpr int kLumpVertices = 10;
 constexpr int kLumpMeshVerts = 11;
+constexpr int kLumpBrushes = 8;
+constexpr int kLumpBrushSides = 9;
 constexpr int kLumpFaces = 13;
 
 constexpr int kFacePolygon = 1;
@@ -32,9 +45,27 @@ constexpr int kFacePatch = 2;
 constexpr int kFaceMesh = 3;
 constexpr int kLumpLightmaps = 14;
 
-constexpr int kTextureSize = 72; // sizeof(bsp texture entry)
+constexpr int kTextureSize = 72; // sizeof(bsp texture entry): name[64] + flags(4) + contents(4)
 constexpr int kVertexSize = 44;  // sizeof(bsp vertex)
 constexpr int kFaceSize = 104;   // sizeof(bsp face)
+constexpr int kPlaneSize = 16;   // vec3 normal + float dist
+constexpr int kNodeSize = 36;    // int planeIdx + int children[2] + int mins[3] + int maxs[3]
+constexpr int kLeafSize = 48;    // 12 ints (cluster,area,mins[3],maxs[3],firstFace,numFaces,firstLeafBrush,numLeafBrushes) — real Q3 dleaf_t; confirmed against tmp/apocalyx/glbsp.h's BSPLeaf
+constexpr int kBrushSize = 12;   // int firstSide + int numSides + int textureIdx
+constexpr int kBrushSideSize = 8; // int planeIdx + int textureIdx
+constexpr int kModelSize = 40;   // vec3 mins + vec3 maxs + int firstFace + int numFaces + int firstBrush + int numBrushes
+
+constexpr int kContentsSolid = 1;       // CONTENTS_SOLID
+constexpr int kContentsPlayerClip = 0x10000; // CONTENTS_PLAYERCLIP — invisible,
+// player-only collision brushes mappers lay over jagged stairs/ramp geometry
+// so the PLAYER slides on a smooth clip hull instead of the visible steps.
+// We only ever collide the player (no weapons/monsters here), so this is
+// exactly as "solid" as CONTENTS_SOLID for our purposes. Missing this was a
+// real bug: on bigger, properly-compiled Quake3 maps (Urban Terror's) that
+// actually use clip brushes, the player caught on the raw visible stair
+// edges underneath instead of the intended smooth ramp — small ledges and
+// stairs "getting stuck" was this, not a math bug in the trace itself.
+constexpr float kContactEps = 0.03125f; // Quake's own DIST_EPSILON convention (1/32 unit)
 
 constexpr float kEps = 1e-6f;
 constexpr int kPatchTess = 5; // Bezier subdivision per 2x2 block
@@ -205,17 +236,714 @@ gl::Texture* tryLoadTex(const std::string& textureDir, const std::string& name)
                                                         true);
 }
 
+// ---- entities lump: "{ \"key\" \"value\" ... }" blocks, no factory yet ------
+std::vector<BspInstance::Entity> parseEntities(const std::string& text)
+{
+    std::vector<BspInstance::Entity> ents;
+    size_t i = 0;
+    while (i < text.size())
+    {
+        size_t open = text.find('{', i);
+        if (open == std::string::npos) break;
+        size_t close = text.find('}', open);
+        if (close == std::string::npos) break;
+
+        BspInstance::Entity e;
+        size_t p = open + 1;
+        while (p < close)
+        {
+            size_t k0 = text.find('"', p);
+            if (k0 == std::string::npos || k0 >= close) break;
+            size_t k1 = text.find('"', k0 + 1);
+            if (k1 == std::string::npos || k1 >= close) break;
+            size_t v0 = text.find('"', k1 + 1);
+            if (v0 == std::string::npos || v0 >= close) break;
+            size_t v1 = text.find('"', v0 + 1);
+            if (v1 == std::string::npos || v1 >= close) break;
+
+            std::string key = text.substr(k0 + 1, k1 - k0 - 1);
+            std::string value = text.substr(v0 + 1, v1 - v0 - 1);
+            e.keyValues[key] = value;
+            p = v1 + 1;
+        }
+        auto it = e.keyValues.find("classname");
+        e.classname = (it != e.keyValues.end()) ? it->second : "";
+        gl::Log::Info("[BSP] entity: classname='%s' keys=%zu", e.classname.c_str(), e.keyValues.size());
+        ents.push_back(std::move(e));
+        i = close + 1;
+    }
+    return ents;
+}
+
+// Q3 "origin" values are "x y z" in Z-up space; swap to engine Y-up, same
+// convention as makeVertex()'s Z-up -> Y-up swap above.
+bool parseOriginYUp(const std::string& s, Vec3& out)
+{
+    float x, y, z;
+    if (std::sscanf(s.c_str(), "%f %f %f", &x, &y, &z) != 3) return false;
+    out = Vec3(x, z, y);
+    return true;
+}
+
 } // namespace
+
+// ============================================================================
+// BspInstance collision: recursive box trace through the BSP tree (Quake's
+// classic CM_RecursiveHullCheck shape) + leaf/brush clip (ClipBoxToBrush).
+// Own implementation against our own Vec3/types — not a port of any single
+// reference; the technique is the standard one shared by apocalyx's GLBsp,
+// 6dx's collider.cpp and Genesis3D's Trace.c (see the BSP plan for details).
+// ============================================================================
+
+bool BspInstance::clipBoxToBrush(const BspBrush& brush, const Vec3& origStart, const Vec3& origEnd,
+                                 const Vec3& halfExtent, BspTraceResult& result) const
+{
+    // Always tested against the trace's ORIGINAL start/end — never a
+    // node-split sub-segment — so `enterFrac` below is already in the
+    // trace's own 0..1 scale, no remap needed. See the long comment on the
+    // declaration in BspInstance.hpp for why that matters.
+    float enterFrac = -1.f;
+    float leaveFrac = 1.f;
+    bool startsOut = false;
+    bool getsOut = false;
+    const BspPlane* clipPlane = nullptr;
+
+    for (int i = 0; i < brush.numSides; ++i)
+    {
+        const BspBrushSide& side = m_bspBrushSides[brush.firstSide + i];
+        const BspPlane& plane = m_bspPlanes[side.planeIndex];
+
+        float offset = std::fabs(halfExtent.x * plane.normal.x) +
+                       std::fabs(halfExtent.y * plane.normal.y) +
+                       std::fabs(halfExtent.z * plane.normal.z);
+        float dist = plane.dist + offset;
+
+        float d1 = Vec3::Dot(plane.normal, origStart) - dist;
+        float d2 = Vec3::Dot(plane.normal, origEnd) - dist;
+
+        if (d2 > 0.f) getsOut = true;
+        if (d1 > 0.f) startsOut = true;
+
+        if (d1 > 0.f && d2 > 0.f) return false; // fully outside this plane, never enters the brush
+        if (d1 <= 0.f && d2 <= 0.f) continue;   // fully behind this plane, doesn't clip the sweep
+
+        // kContactEps shrinks the stop point slightly short of the true
+        // geometric surface (entering) / slightly past it (leaving) — so a
+        // resolved position is NEVER left exactly on a plane, where the
+        // next frame's d1 would be an ambiguous ~0 and misclassify as
+        // already-embedded. Same technique as apocalyx's GLBsp and
+        // DigiBen's BSP Loader Part 6 (both use kEpsilon/DIST_EPSILON =
+        // 0.03125f this exact way), not a bandaid on the result afterward.
+        if (d1 > d2) // entering through this plane
+        {
+            float f = (d1 - kContactEps) / (d1 - d2);
+            if (f > enterFrac) { enterFrac = f; clipPlane = &plane; }
+        }
+        else // leaving through this plane
+        {
+            float f = (d1 + kContactEps) / (d1 - d2);
+            if (f < leaveFrac) leaveFrac = f;
+        }
+    }
+
+    if (!startsOut)
+    {
+        // start point already inside the brush's solid volume
+        result.startSolid = true;
+        if (!getsOut && result.fraction > 0.f)
+        {
+            result.hit = true;
+            result.fraction = 0.f;
+        }
+        return true;
+    }
+
+    if (enterFrac < leaveFrac && enterFrac > -1.f && enterFrac < result.fraction)
+    {
+        if (enterFrac < 0.f) enterFrac = 0.f;
+        result.fraction = enterFrac;
+        result.normal = clipPlane ? clipPlane->normal : Vec3(0.f, 1.f, 0.f);
+        result.hit = true;
+        return true;
+    }
+    return false;
+}
+
+void BspInstance::traceLeaf(int leaf, const Vec3& origStart, const Vec3& origEnd,
+                            const Vec3& halfExtent, BspTraceResult& result) const
+{
+    const BspLeaf& lf = m_bspLeafs[leaf];
+    for (int i = 0; i < lf.numLeafBrushes; ++i)
+    {
+        int brushIdx = m_bspLeafBrushes[lf.firstLeafBrush + i];
+        const BspBrush& brush = m_bspBrushes[brushIdx];
+        if (!brush.solid) continue;
+        clipBoxToBrush(brush, origStart, origEnd, halfExtent, result);
+    }
+}
+
+void BspInstance::traceNode(int node, float startFrac, float endFrac, const Vec3& start,
+                            const Vec3& end, const Vec3& origStart, const Vec3& origEnd,
+                            const Vec3& halfExtent, BspTraceResult& result) const
+{
+    if (result.fraction <= startFrac) return; // a closer hit was already found elsewhere
+
+    if (node < 0)
+    {
+        traceLeaf(~node, origStart, origEnd, halfExtent, result);
+        return;
+    }
+
+    const BspNode& n = m_bspNodes[node];
+    const BspPlane& plane = m_bspPlanes[n.planeIndex];
+
+    float offset = std::fabs(halfExtent.x * plane.normal.x) +
+                   std::fabs(halfExtent.y * plane.normal.y) +
+                   std::fabs(halfExtent.z * plane.normal.z);
+
+    float t1 = Vec3::Dot(plane.normal, start) - plane.dist;
+    float t2 = Vec3::Dot(plane.normal, end) - plane.dist;
+
+    if (t1 >= offset && t2 >= offset)
+    {
+        traceNode(n.children[0], startFrac, endFrac, start, end, origStart, origEnd, halfExtent, result);
+        return;
+    }
+    if (t1 < -offset && t2 < -offset)
+    {
+        traceNode(n.children[1], startFrac, endFrac, start, end, origStart, origEnd, halfExtent, result);
+        return;
+    }
+
+    // the sweep straddles this plane: split at the crossing point(s) and
+    // recurse the near side first, then the far side. kContactEps here
+    // matches clipBoxToBrush's — same reasoning, see its comment.
+    int side;
+    float frac1, frac2;
+    if (t1 < t2)
+    {
+        float idist = 1.f / (t1 - t2);
+        side = 1; // back first
+        frac1 = (t1 - offset - kContactEps) * idist;
+        frac2 = (t1 + offset + kContactEps) * idist;
+    }
+    else if (t1 > t2)
+    {
+        float idist = 1.f / (t1 - t2);
+        side = 0; // front first
+        frac1 = (t1 + offset + kContactEps) * idist;
+        frac2 = (t1 - offset - kContactEps) * idist;
+    }
+    else
+    {
+        side = 0;
+        frac1 = 0.f;
+        frac2 = 1.f;
+    }
+    frac1 = frac1 < 0.f ? 0.f : (frac1 > 1.f ? 1.f : frac1);
+    frac2 = frac2 < 0.f ? 0.f : (frac2 > 1.f ? 1.f : frac2);
+
+    // near side: from `start` up to the first crossing point
+    float midFrac1 = startFrac + (endFrac - startFrac) * frac1;
+    Vec3 mid1 = start + (end - start) * frac1;
+    traceNode(n.children[side], startFrac, midFrac1, start, mid1, origStart, origEnd, halfExtent, result);
+
+    // far side: from the second crossing point onward to `end` — NOT
+    // `start` again (a real bug here: reusing `start` corrupted every
+    // traversal that crossed more than one splitting plane, which a short
+    // vertical drop rarely does but any long horizontal sweep always does —
+    // exactly why floor collision looked fine while wall collision found
+    // nothing at all).
+    float midFrac2 = startFrac + (endFrac - startFrac) * frac2;
+    Vec3 mid2 = start + (end - start) * frac2;
+    traceNode(n.children[side ^ 1], midFrac2, endFrac, mid2, end, origStart, origEnd, halfExtent, result);
+}
+
+BspTraceResult BspInstance::traceBox(const Vec3& start, const Vec3& end, const Vec3& halfExtent) const
+{
+    BspTraceResult result;
+    result.fraction = 1.f;
+    result.endPos = end;
+    if (m_bspNodes.empty())
+    {
+        return result;
+    }
+    traceNode(m_bspRootNode, 0.f, 1.f, start, end, start, end, halfExtent, result);
+    result.endPos = start + (end - start) * result.fraction;
+    return result;
+}
+
+
+static bool isWalkableGround(const Vec3& n)
+{
+    return n.y >= 0.7f;
+}
+Vec3 BspInstance::tryStepUp(const Vec3& start, const Vec3& end, const Vec3& halfExtent,
+    bool* outStepped, bool* outGrounded) const
+{
+    if (outStepped) *outStepped = false;
+    if (outGrounded) *outGrounded = false;
+
+ 
+    constexpr float kStepHeight = 24.f;
+
+    const Vec3 move = end - start;
+    const Vec3 horizMove(move.x, 0.f, move.z);
+
+    if (horizMove.length_squared() <= 1e-8f)
+        return start;
+
+    // Probe with a narrower horizontal footprint than the real body for the
+    // up/forward/down search (full height kept — headroom still needs to be
+    // real). A full-width box can straddle two risers at once on stairs
+    // whose tread depth is shorter than the player's own width, wedging it
+    // between steps instead of climbing (this was a real bug here — the
+    // player got stuck partway up a narrower staircase, camera ending up
+    // jammed into the geometry). Same technique most engines use: probe
+    // narrow, then verify the full body actually fits at the result before
+    // committing to it.
+    const Vec3 probeExtent(halfExtent.x * 0.5f, halfExtent.y, halfExtent.z * 0.5f);
+
+    // PASSO 1: Subir (Trace UP)
+    // Em vez de teleportar, fazemos sweep para cima. Se batermos num teto baixo,
+    // o traceUp.endPos para antes de atravessar geometria sólida.
+    Vec3 upTarget = start + Vec3(0.f, kStepHeight, 0.f);
+    BspTraceResult traceUp = traceBox(start, upTarget, probeExtent);
+
+    Vec3 steppedStart = traceUp.endPos;
+
+    // PASSO 2: Avançar (Trace FORWARD)
+    // Tenta mover para a frente a partir do ponto mais alto que conseguimos subir.
+    Vec3 forwardTarget = steppedStart + horizMove;
+    BspTraceResult traceForward = traceBox(steppedStart, forwardTarget, probeExtent);
+
+    // Crítico: Se o sweep horizontal mal avançou (bateu numa parede logo a seguir ao degrau),
+    // consideramos o step um fracasso para evitar que o jogador fique preso em esquinas.
+    if (traceForward.fraction < 0.01f)
+        return start;
+
+    Vec3 forwardEnd = traceForward.endPos;
+
+    // PASSO 3: Descer (Trace DOWN)
+    // Descemos a mesma altura que tentámos subir originalmente, mais uma margem (2.0f)
+    // para garantir que a colisão com o chão regista corretamente.
+    Vec3 downTarget = forwardEnd - Vec3(0.f, kStepHeight + 2.0f, 0.f);
+    BspTraceResult traceDown = traceBox(forwardEnd, downTarget, probeExtent);
+
+    // Se o sweep para baixo não bateu em nada, não é um degrau, é um buraco/precipício.
+    if (!traceDown.hit)
+        return start;
+
+    // Se aterra num declive acentuado que não é "camiho", rejeita.
+    if (!isWalkableGround(traceDown.normal))
+        return start;
+
+    // Verification: does the REAL, full-width body actually fit at the
+    // narrow probe's result? A zero-length trace at that spot with the
+    // real halfExtent just checks for embedding (startSolid) — if the
+    // narrow probe found a landing too tight for the real body, reject
+    // rather than wedge the player into geometry.
+    BspTraceResult fitCheck = traceBox(traceDown.endPos, traceDown.endPos, halfExtent);
+    if (fitCheck.startSolid)
+        return start;
+
+    // O Step foi bem sucedido.
+    if (outStepped) *outStepped = true;
+    if (outGrounded) *outGrounded = true;
+
+    return traceDown.endPos;
+}
+
+Vec3 BspInstance::moveAndSlide(const Vec3& start, const Vec3& end,
+    const Vec3& halfExtent, BspCollisionResponse response, bool* outGrounded) const
+{
+    Vec3 pos = start;
+    Vec3 remaining = end - start;
+    bool grounded = false;
+
+    for (int pass = 0; pass < 4; ++pass)
+    {
+        if (remaining.length_squared() <= 1e-8f)
+            break;
+
+        Vec3 target = pos + remaining;
+        BspTraceResult tr = traceBox(pos, target, halfExtent);
+
+        Vec3 reached = tr.endPos;
+        Vec3 leftover = target - reached;
+        pos = reached;
+
+        if (!tr.hit)
+            break;
+
+        if (isWalkableGround(tr.normal))
+            grounded = true;
+
+        if (response == BspCollisionResponse::Stop)
+            break;
+
+        // Qualquer superfície íngreme demais para andar é tratada como um potencial degrau
+        const bool lateralWall = std::fabs(tr.normal.y) < 0.7f;
+        const bool hasHorizontalIntent =
+            (remaining.x * remaining.x + remaining.z * remaining.z) > 1e-8f;
+
+        // the ordinary slide result for this pass — computed regardless of
+        // whether we also try stepping, so the two can be compared
+        float d = leftover.dot(tr.normal);
+        Vec3 slid = leftover - tr.normal * d;
+        if (response == BspCollisionResponse::SlideXZ)
+            slid.y = 0.f;
+
+        if (lateralWall && hasHorizontalIntent)
+        {
+            bool stepped = false;
+            bool stepGrounded = false;
+            Vec3 stepPos = tryStepUp(pos, target, halfExtent, &stepped, &stepGrounded);
+
+            // Only take the step if it actually makes at least as much
+            // horizontal progress as sliding along the wall would have —
+            // this is what makes the LAST step of a staircase behave: once
+            // you're on the top landing, sliding already goes straight
+            // through (no riser left to climb), so it naturally wins over
+            // stepping instead of tryStepUp needing to special-case "is
+            // this the top." Same technique real engines use (Source's
+            // StepMove / Quake3's PM_StepSlideMove) — compare, don't guess.
+            if (stepped)
+            {
+                Vec3 stepHoriz(stepPos.x - pos.x, 0.f, stepPos.z - pos.z);
+                Vec3 slideHoriz(slid.x, 0.f, slid.z);
+                if (stepHoriz.length_squared() >= slideHoriz.length_squared() * 0.9f)
+                {
+                    pos = stepPos;
+                    grounded = grounded || stepGrounded;
+
+                    // Manter apenas a direção horizontal que faltava percorrer.
+                    // Se não cortarmos o Y (0.f), o boneco afunda no chão.
+                    Vec3 unMoved = target - pos;
+                    remaining = Vec3(unMoved.x, 0.f, unMoved.z);
+                    continue;
+                }
+            }
+        }
+
+        remaining = slid;
+    }
+
+    // Extra ground probe, independent of whatever happened during the move
+    // above: a short trace straight down from the resolved position. Purely
+    // relying on "was the last hit this pass a floor normal" misses cases
+    // where a wide box is resting on a narrow stair tread — gravity's own
+    // downward trace can land on a step's edge/corner or an already-settled
+    // contact that never re-triggers a fresh hit this frame, so `grounded`
+    // stays false even though the player is clearly standing on something
+    // (symptom: can't jump while standing still on stairs). Same idea as a
+    // CharacterController's separate "IsGrounded" foot-probe in Unity/Unreal
+    // — decoupled from the movement trace entirely.
+    if (!grounded)
+    {
+        BspTraceResult groundProbe = traceBox(pos, pos - Vec3(0.f, 4.f, 0.f), halfExtent);
+        if (groundProbe.hit && isWalkableGround(groundProbe.normal))
+            grounded = true;
+    }
+
+    if (outGrounded)
+        *outGrounded = grounded;
+
+    return pos;
+}
+
+BspRayHit BspInstance::raycast(const Vec3& origin, const Vec3& direction, float maxDistance) const
+{
+    BspRayHit out;
+    float len = direction.length();
+    if (len < 1e-6f) return out;
+
+    Vec3 dir = direction * (1.f / len);
+    Vec3 end = origin + dir * maxDistance;
+    BspTraceResult tr = traceBox(origin, end, Vec3(0.f, 0.f, 0.f));
+
+    out.hit = tr.hit;
+    out.point = tr.endPos;
+    out.normal = tr.normal;
+    out.distance = tr.fraction * maxDistance;
+    return out;
+}
+// Vec3 BspInstance::moveAndSlide(const Vec3& start, const Vec3& end, const Vec3& halfExtent,
+//                                BspCollisionResponse response, bool* outGrounded) const
+// {
+//     Vec3 pos = start;
+//     Vec3 remaining = end - start;
+//     bool grounded = false;
+
+//     for (int pass = 0; pass < 4; ++pass)
+//     {
+//         if (remaining.length_squared() < 1e-8f) break;
+
+//         Vec3 target = pos + remaining;
+//         BspTraceResult tr = traceBox(pos, target, halfExtent);
+//         Vec3 reached = tr.endPos;
+//         Vec3 leftover = target - reached;
+//         pos = reached;
+
+//         if (!tr.hit) break;
+//         if (tr.normal.y > 0.7f) grounded = true;
+
+//         if (response == BspCollisionResponse::Stop) break;
+
+//         float d = Vec3::Dot(leftover, tr.normal);
+//         Vec3 slid = leftover - tr.normal * d;
+//         if (response == BspCollisionResponse::SlideXZ) slid.y = 0.f;
+//         remaining = slid;
+//     }
+
+//     if (outGrounded) *outGrounded = grounded;
+//     return pos;
+// }
+
+bool BspInstance::find_spawn_point(Vec3& outPos) const
+{
+    const Entity* fallback = nullptr;
+    for (const Entity& e : m_entities)
+    {
+        if (e.classname == "info_player_start")
+        {
+            auto it = e.keyValues.find("origin");
+            if (it != e.keyValues.end() && parseOriginYUp(it->second, outPos)) return true;
+        }
+        else if (e.classname == "info_player_deathmatch" && !fallback)
+        {
+            fallback = &e;
+        }
+    }
+    if (fallback)
+    {
+        auto it = fallback->keyValues.find("origin");
+        if (it != fallback->keyValues.end() && parseOriginYUp(it->second, outPos)) return true;
+    }
+    return false;
+}
+
+bool BspInstance::entity_origin(const Entity& e, Vec3& outPos)
+{
+    auto it = e.keyValues.find("origin");
+    if (it == e.keyValues.end()) return false;
+    return parseOriginYUp(it->second, outPos);
+}
+
+bool BspInstance::entity_model_bounds(const Entity& e, Vec3& outMin, Vec3& outMax) const
+{
+    auto it = e.keyValues.find("model");
+    if (it == e.keyValues.end() || it->second.empty() || it->second[0] != '*') return false;
+
+    int idx = std::atoi(it->second.c_str() + 1);
+    if (idx <= 0 || idx >= (int)m_bspModels.size()) return false; // model 0 is worldspawn, never referenced
+
+    const BspModel& m = m_bspModels[idx];
+    outMin = m.mins;
+    outMax = m.maxs;
+    return true;
+}
+
+int BspInstance::remove_entities(const std::string& classname)
+{
+    size_t before = m_entities.size();
+    m_entities.erase(std::remove_if(m_entities.begin(), m_entities.end(),
+                                    [&](const Entity& e) { return e.classname == classname; }),
+                     m_entities.end());
+    return static_cast<int>(before - m_entities.size());
+}
+
+bool assets::AssetManager::load_bsp_collision(BspInstance* inst, const char* path)
+{
+    if (!inst || !path) return false;
+
+    scene::ByteArray bytes;
+    if (!fs::getFilesystem().readFile(path, bytes))
+    {
+        gl::Log::Error("[BSP] cannot read '%s'", path);
+        return false;
+    }
+    const u8* data = bytes.data();
+    const u32 dataSize = bytes.size();
+
+    if (dataSize < 8 + kNumLumps * 8)
+    {
+        gl::Log::Error("[BSP] truncated header '%s'", path);
+        return false;
+    }
+    if (rdI32(data, 0) != kQ3Ident || rdI32(data, 4) != kQ3Version)
+    {
+        gl::Log::Error("[BSP] bad magic / version in '%s'", path);
+        return false;
+    }
+
+    inst->loadCollisionFromBytes(data, dataSize, path);
+    return true;
+}
+
+void BspInstance::loadCollisionFromBytes(const u8* data, u32 dataSize, const char* path)
+{
+    BspInstance* inst = this; // keep the body below identical to before the refactor
+
+    std::vector<Lump> lumps(kNumLumps);
+    for (int i = 0; i < kNumLumps; ++i)
+    {
+        lumps[i].offset = rdI32(data, 8 + i * 8);
+        lumps[i].length = rdI32(data, 8 + i * 8 + 4);
+    }
+
+    // ---- textures: need "contents" (offset 68) to know which brushes are solid
+    int numTextures = 0;
+    const u8* texBase = lumpInfo(data, dataSize, lumps[kLumpTextures], kTextureSize, numTextures);
+    std::vector<int> textureContents;
+    textureContents.reserve(numTextures);
+    for (int i = 0; i < numTextures; ++i)
+        textureContents.push_back(rdI32(data, static_cast<int>((texBase - data) + i * kTextureSize + 68)));
+
+    // ---- planes ---------------------------------------------------------
+    int numPlanes = 0;
+    const u8* planeBase = lumpInfo(data, dataSize, lumps[kLumpPlanes], kPlaneSize, numPlanes);
+    inst->m_bspPlanes.clear();
+    inst->m_bspPlanes.reserve(numPlanes);
+    for (int i = 0; i < numPlanes; ++i)
+    {
+        int o = static_cast<int>((planeBase - data) + i * kPlaneSize);
+        // Z-up -> Y-up, same swap as vertices: (x, z, y).
+        BspInstance::BspPlane p;
+        p.normal = Vec3(rdF32(data, o), rdF32(data, o + 8), rdF32(data, o + 4));
+        p.dist = rdF32(data, o + 12);
+        inst->m_bspPlanes.push_back(p);
+    }
+
+    // ---- nodes ------------------------------------------------------------
+    int numNodes = 0;
+    const u8* nodeBase = lumpInfo(data, dataSize, lumps[kLumpNodes], kNodeSize, numNodes);
+    inst->m_bspNodes.clear();
+    inst->m_bspNodes.reserve(numNodes);
+    for (int i = 0; i < numNodes; ++i)
+    {
+        int o = static_cast<int>((nodeBase - data) + i * kNodeSize);
+        BspInstance::BspNode n;
+        n.planeIndex = rdI32(data, o);
+        n.children[0] = rdI32(data, o + 4);
+        n.children[1] = rdI32(data, o + 8);
+        inst->m_bspNodes.push_back(n);
+    }
+    inst->m_bspRootNode = 0; // Q3's world tree always roots at node 0
+
+    // ---- leafs --------------------------------------------------------------
+    int numLeafs = 0;
+    const u8* leafBase = lumpInfo(data, dataSize, lumps[kLumpLeafs], kLeafSize, numLeafs);
+    inst->m_bspLeafs.clear();
+    inst->m_bspLeafs.reserve(numLeafs);
+    for (int i = 0; i < numLeafs; ++i)
+    {
+        int o = static_cast<int>((leafBase - data) + i * kLeafSize);
+        BspInstance::BspLeaf lf;
+        // 12 ints: cluster,area,mins[3],maxs[3],firstface,numfaces,firstbrush,numbrushes
+        lf.firstLeafBrush = rdI32(data, o + 40);
+        lf.numLeafBrushes = rdI32(data, o + 44);
+        inst->m_bspLeafs.push_back(lf);
+    }
+
+    // ---- leafbrushes --------------------------------------------------------
+    int numLeafBrushes = 0;
+    const u8* lbBase = lumpInfo(data, dataSize, lumps[kLumpLeafBrushes], 4, numLeafBrushes);
+    inst->m_bspLeafBrushes.clear();
+    inst->m_bspLeafBrushes.reserve(numLeafBrushes);
+    for (int i = 0; i < numLeafBrushes; ++i)
+        inst->m_bspLeafBrushes.push_back(rdI32(data, static_cast<int>((lbBase - data) + i * 4)));
+
+    // ---- brushsides -----------------------------------------------------
+    int numBrushSides = 0;
+    const u8* bsBase = lumpInfo(data, dataSize, lumps[kLumpBrushSides], kBrushSideSize, numBrushSides);
+    inst->m_bspBrushSides.clear();
+    inst->m_bspBrushSides.reserve(numBrushSides);
+    for (int i = 0; i < numBrushSides; ++i)
+    {
+        int o = static_cast<int>((bsBase - data) + i * kBrushSideSize);
+        BspInstance::BspBrushSide s;
+        s.planeIndex = rdI32(data, o);
+        inst->m_bspBrushSides.push_back(s);
+    }
+
+    // ---- brushes --------------------------------------------------------
+    int numBrushes = 0;
+    const u8* brushBase = lumpInfo(data, dataSize, lumps[kLumpBrushes], kBrushSize, numBrushes);
+    inst->m_bspBrushes.clear();
+    inst->m_bspBrushes.reserve(numBrushes);
+    for (int i = 0; i < numBrushes; ++i)
+    {
+        int o = static_cast<int>((brushBase - data) + i * kBrushSize);
+        BspInstance::BspBrush b;
+        b.firstSide = rdI32(data, o);
+        b.numSides = rdI32(data, o + 4);
+        int texIdx = rdI32(data, o + 8);
+        int contents = (texIdx >= 0 && texIdx < (int)textureContents.size()) ? textureContents[texIdx] : 0;
+        b.solid = (contents & (kContentsSolid | kContentsPlayerClip)) != 0;
+        inst->m_bspBrushes.push_back(b);
+    }
+
+    // ---- models (brush entities' own geometry — model 0 is worldspawn) ---
+    int numModels = 0;
+    const u8* modelBase = lumpInfo(data, dataSize, lumps[kLumpModels], kModelSize, numModels);
+    inst->m_bspModels.clear();
+    inst->m_bspModels.reserve(numModels);
+    for (int i = 0; i < numModels; ++i)
+    {
+        int o = static_cast<int>((modelBase - data) + i * kModelSize);
+        BspInstance::BspModel md;
+        // Z-up -> Y-up, same (x, z, y) swap as everything else in this file.
+        md.mins = Vec3(rdF32(data, o), rdF32(data, o + 8), rdF32(data, o + 4));
+        md.maxs = Vec3(rdF32(data, o + 12), rdF32(data, o + 20), rdF32(data, o + 16));
+        md.firstBrush = rdI32(data, o + 32);
+        md.numBrushes = rdI32(data, o + 36);
+        inst->m_bspModels.push_back(md);
+    }
+
+    // ---- entities (raw text) ---------------------------------------------
+    const Lump& entLump = lumps[kLumpEntities];
+    std::string entText;
+    if (entLump.offset >= 0 && entLump.length > 0 &&
+        entLump.offset + entLump.length <= (int)dataSize)
+    {
+        entText.assign(reinterpret_cast<const char*>(data + entLump.offset), entLump.length);
+    }
+    inst->m_entities = parseEntities(entText);
+
+    // classname breakdown — so it's actually clear what got loaded, not
+    // just a count (89 entities tells you nothing about what they are)
+    std::unordered_map<std::string, int> classCounts;
+    for (const BspInstance::Entity& e : inst->m_entities) ++classCounts[e.classname];
+    std::string breakdown;
+    for (const auto& kv : classCounts)
+    {
+        if (!breakdown.empty()) breakdown += ", ";
+        breakdown += kv.first + " x" + std::to_string(kv.second);
+    }
+
+    gl::Log::Info("[BSP] '%s' collision: planes=%d nodes=%d leafs=%d brushes=%d models=%d entities=%d",
+                  path, numPlanes, numNodes, numLeafs, numBrushes, numModels,
+                  (int)inst->m_entities.size());
+    gl::Log::Info("[BSP] '%s' entity classes: %s", path, breakdown.c_str());
+}
 
 Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
                      std::vector<Material*>& out_mats,
-                     const char* textureDir)
+                     const char* textureDir,
+                     BspInstance* collision)
 {
     if (!name || !path) return nullptr;
 
-    // Already loaded?
+    // Already loaded? (rare path: a second BspInstance for the same map —
+    // still needs its own collision fill, so this falls back to a real
+    // re-read rather than skip it silently)
     Mesh* existing = getMesh(name);
-    if (existing) return existing;
+    if (existing)
+    {
+        if (collision) load_bsp_collision(collision, path);
+        return existing;
+    }
 
     // ---- read the whole file into memory ------------------------------------
     scene::ByteArray bytes;
@@ -238,6 +966,10 @@ Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
         return nullptr;
     }
 
+    // Collision + entities, straight off this same in-memory buffer — no
+    // second file read (see BspInstance::loadCollisionFromBytes's comment).
+    if (collision) collision->loadCollisionFromBytes(data, dataSize, path);
+
     // ---- parse lump table ---------------------------------------------------
     std::vector<Lump> lumps(kNumLumps);
     for (int i = 0; i < kNumLumps; ++i)
@@ -257,20 +989,32 @@ Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
     }
 
     // ---- parse lightmaps (lump 14: 128x128 RGB pages) -----------------------
+    // Q3 lightmap pages are stored as raw, ungamma-corrected radiosity
+    // samples — applied straight to the framebuffer they read flat/dark, so
+    // every Q3-derived renderer re-brightens them on load (the classic
+    // r_lightmapgamma/overbright-bits knob). kLightmapGamma < 1 brightens
+    // midtones (out = (in/255)^gamma * 255); 1.0 would be a no-op.
+    constexpr float kLightmapGamma = 0.9f;
     constexpr int kLmSize = 128 * 128 * 3;
     int numLightmaps = 0;
     const u8* lmBase = lumpInfo(data, dataSize, lumps[kLumpLightmaps], kLmSize, numLightmaps);
     std::vector<gl::Texture*> lightmapTextures;
     lightmapTextures.reserve(numLightmaps);
+    u8 gammaLUT[256];
+    for (int v = 0; v < 256; ++v)
+    {
+        float f = std::pow(static_cast<float>(v) / 255.f, kLightmapGamma) * 255.f;
+        gammaLUT[v] = static_cast<u8>(f < 0.f ? 0.f : (f > 255.f ? 255.f : f));
+    }
     for (int i = 0; i < numLightmaps; ++i)
     {
         const u8* src = lmBase + i * kLmSize;
         std::vector<u8> rgba(128 * 128 * 4);
         for (int p = 0; p < 128 * 128; ++p)
         {
-            rgba[p * 4 + 0] = src[p * 3 + 0];
-            rgba[p * 4 + 1] = src[p * 3 + 1];
-            rgba[p * 4 + 2] = src[p * 3 + 2];
+            rgba[p * 4 + 0] = gammaLUT[src[p * 3 + 0]];
+            rgba[p * 4 + 1] = gammaLUT[src[p * 3 + 1]];
+            rgba[p * 4 + 2] = gammaLUT[src[p * 3 + 2]];
             rgba[p * 4 + 3] = 255;
         }
         std::string lmName = std::string(name) + "/lm_" + std::to_string(i);

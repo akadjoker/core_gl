@@ -11,6 +11,7 @@
 class Mesh;
 class SkinnedMesh;
 class Material;
+class BspInstance;
 struct MorphKeyframes;
 struct MorphTags;
 namespace volume
@@ -96,10 +97,25 @@ public:
     // (e.g. assign a texture) but must not be deleted by it.
     // `textureDir` is prepended to texture names when loading image files;
     // .tga/.jpg/.png/.bmp are tried in that order.
+    // `collision`, if given, gets its own collision data filled in from the
+    // SAME in-memory file buffer this function already read for the render
+    // mesh — no second disk read/parse (see BspInstance::
+    // loadCollisionFromBytes and load_bsp_collision below, which exists for
+    // the rarer case of wanting collision without the render mesh at all).
     // Returns nullptr on I/O or parse failure (error is logged).
     Mesh* load_bsp_mesh(const char* name, const char* path,
                      std::vector<Material*>& out_mats,
-                     const char* textureDir = "");
+                     const char* textureDir = "",
+                     BspInstance* collision = nullptr);
+
+    // Standalone collision-only load: reads `path` itself and fills `inst`'s
+    // planes/nodes/leafs/leafbrushes/brushes/brushsides/models/entities data
+    // (see BspInstance.hpp — traceBox/moveAndSlide/entities()/
+    // find_spawn_point()). Prefer passing `inst` straight into
+    // load_bsp_mesh's `collision` parameter instead when you're loading the
+    // render mesh too — that shares one file read; this one always reads
+    // its own copy. Returns false on I/O or parse failure (error is logged).
+    bool load_bsp_collision(BspInstance* inst, const char* path);
 
     // Loads a Quake 2 MD2 (.md2) — vertex/morph animation, single surface,
     // no tags. Builds the mesh with upload_dynamic(); the caller drives it

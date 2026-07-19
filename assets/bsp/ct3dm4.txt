@@ -1,0 +1,85 @@
+Release date: 16th of march 2010.
+Quake3Arena/QuakeLive DM/Tourney level.
+
+============================================================
+title:            Paranoid
+file:             ct3dm4.pk3
+author:           cityy
+email address:    cityy at gmx dot de
+
+You can also contact me in #quakelive on quakenet (cityy).
+============================================================
+play information:
+
+tourney:          1on1
+deathmatch:       Small DM (up to 6 ppl)
+team deathmatch:  3vs3
+clan arena:	  3vs3
+CTF:              no
+Bot File (aas):   yes
+other:            Be sure to visit the secret room :)
+new sounds:       no
+new graphics:     yes
+new music:        no
+
+how to play:      place ct3dm4.pk3 in your /baseq3/ folder
+                  start quake3/Live
+                  hit ~
+                  type \map ct3dm4
+                  type \addbot <botname> <skill>
+
+                  hit ~ (to clear the console)
+                 
+                  OR select Paranoid(ct3dm4) from the skrimish menu 
+============================================================
+info:
+
+This is my first real map. The build time was a long time because I lost motivaton 
+a couple of times and also had a hard drive crash that forced me to redo a lot of stuff. 
+But now it is done and I think I can be happy with the result. :)
+
+============================================================
+construction:
+
+base:           none
+editor:         GTKRadiant 1.5 by Id Software
+other progs:    The GIMP, Q3map2 toolz
+know bugs:      none known
+build time:     a long time...
+
+============================================================
+Used materials:
+
+- AEon - AEcell textures - http://www.quake3forum.com/forum/viewtopic.php?f=10&t=41665
+- Tabun - Tab_Decals Texture set http://www.tabun.nl
+- Hipshot - Jumppad shader - http://zfight.com/
+- evillair - evil7 and evil8 texture sets - http://www.evillair.net/v2/
+- sock - Terrain texture set, plants texture set/models, tech texture set - http://www.simonoc.com/
+- CGtextures - Photo references for some of my textures - http://cgtextures.com/
+- Speedy - Andromeda Texture set - www.cr8.da.ru
+- opacity.us - Urban focused online gallery
+- dubtown.de - german gallery with urban photos
+- Hazel Whorley - Skybox Hw_city
+- Method - articles about creating textures from photo references and developing level design ideas - http://www.methodonline.com/
+- cha0s - part of the teleporter shader - http://www.chaosquake.de/
+
+Thanks to everyone over at the quake3world.com LEM forum - I learned a lot during the 
+process of building this map! Thanks to everyone in #quake3world, #quakelive, #maverickservers, #hoq, #derquaker
+who gave feedback and also to Newbi, BubbleQ and decx and everyone who gave feedback over at quakelive.com/forum. :b
+
+... oh yer and to Tigger-oN, cause ..::LvL just rules!!!!!! ;)))
+
+============================================================
+Distribution / Copyright / Permissions 
+
+Copyright (c) 2010 cityy, cityy at gmx dot de
+All rights reserved.
+
+Quake III Arena is a registered trademark of id Software, Inc.
+
+This level may be electronically distributed only at NO
+CHARGE to the recipient in its current state, MUST include
+this .txt file, and may NOT be modified IN ANY WAY. UNDER NO
+CIRCUMSTANCES IS THIS LEVEL TO BE DISTRIBUTED ON CD-ROM
+WITHOUT PRIOR WRITTEN PERMISSION.
+============================================================

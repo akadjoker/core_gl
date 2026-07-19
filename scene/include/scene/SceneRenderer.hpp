@@ -198,6 +198,23 @@ public:
     void draw_wire_sphere(Camera3D& camera, const Vec3& center, float radius, gl::u8 r = 255, gl::u8 g = 220,
                           gl::u8 b = 60, gl::u8 a = 255);
 
+    // Same idea, a wireframe box (half-extent, not full size — matches
+    // BoundingBox's own convention). Used for generic/brush-entity gizmos
+    // (see BspInstance::entities()/entity_model_bounds) where a sphere
+    // doesn't fit the shape.
+    void draw_wire_box(Camera3D& camera, const Vec3& center, const Vec3& halfExtent, gl::u8 r = 60,
+                       gl::u8 g = 220, gl::u8 b = 255, gl::u8 a = 255);
+
+    // A "3D label": projects `worldPos` through the camera and draws 2D
+    // text there with the same embedded-font batch draw_stats() uses (no
+    // separate font system — this is screen-space text pinned to a world
+    // point, not real geometry). Skips drawing if the point is behind the
+    // camera. `viewport_w`/`viewport_h` must match what render() was just
+    // called with. Call after render(), like draw_wire_sphere/draw_wire_box.
+    void draw_world_text(Camera3D& camera, const Vec3& worldPos, const char* text, int viewport_w,
+                         int viewport_h, float size = 14.f, gl::u8 r = 255, gl::u8 g = 255,
+                         gl::u8 b = 255, gl::u8 a = 255);
+
 private:
     void draw_stats(int viewport_w, int viewport_h);
     void draw_light_gizmos(const Mat4& viewProj);

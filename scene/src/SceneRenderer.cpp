@@ -2189,9 +2189,68 @@ void SceneRenderer::draw_wire_sphere(Camera3D& camera, const Vec3& center, float
     m_gizmoBatch.SetColor(r, g, b, a);
     m_gizmoBatch.SphereWire(center.x, center.y, center.z, radius);
     m_gizmoBatch.Render();
+}
+
+void SceneRenderer::draw_wire_box(Camera3D& camera, const Vec3& center, const Vec3& halfExtent,
+                                  gl::u8 r, gl::u8 g, gl::u8 b, gl::u8 a)
+{
+    if (!m_gizmoBatchReady)
+    {
+        if (!m_gizmoBatch.Init()) return;
+        m_gizmoBatchReady = true;
+    }
+
+    gl::Renderer::SetDepthTest(true);
+    gl::Renderer::SetDepthWrite(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(a < 255);
+    if (a < 255) gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+
+    Mat4 viewProj = camera.get_view_projection();
+    m_gizmoBatch.SetProjection(viewProj.x);
+    m_gizmoBatch.LoadIdentity();
+    m_gizmoBatch.SetMode(gl::RenderPrimitive::LINES);
+    m_gizmoBatch.SetColor(r, g, b, a);
+    m_gizmoBatch.CubeWire(center.x, center.y, center.z, halfExtent.x * 2.f, halfExtent.y * 2.f,
+                         halfExtent.z * 2.f);
+    m_gizmoBatch.Render();
 
     gl::Renderer::SetBlend(false);
     gl::Renderer::SetDepthWrite(true);
+}
+
+void SceneRenderer::draw_world_text(Camera3D& camera, const Vec3& worldPos, const char* text,
+                                    int viewport_w, int viewport_h, float size, gl::u8 r, gl::u8 g,
+                                    gl::u8 b, gl::u8 a)
+{
+    if (!m_statsBatchReady)
+    {
+        if (!m_statsBatch.Init()) return;
+        m_statsBatchReady = true;
+    }
+
+    Mat4 viewProj = camera.get_view_projection();
+    Vec4 clip = viewProj * Vec4(worldPos);
+    if (clip.w <= 0.001f) return; // behind the camera — nothing sane to project
+
+    float ndcX = clip.x / clip.w;
+    float ndcY = clip.y / clip.w;
+    float sx = (ndcX * 0.5f + 0.5f) * (float)viewport_w;
+    float sy = (1.f - (ndcY * 0.5f + 0.5f)) * (float)viewport_h;
+
+    Mat4 ortho = Mat4::Ortho(0.f, (float)viewport_w, (float)viewport_h, 0.f, -1.f, 1.f);
+    m_statsBatch.SetProjection(ortho.x);
+
+    gl::Renderer::SetDepthTest(false);
+    gl::Renderer::SetBlend(true);
+    gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA, gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+
+    m_statsBatch.SetColor(r, g, b, a);
+    m_statsBatch.Text(sx, sy, size, text);
+    m_statsBatch.Render();
+
+    gl::Renderer::SetBlend(false);
+    gl::Renderer::SetDepthTest(true);
 }
 
 void SceneRenderer::collect_octree_bounds(const SceneOctreeNode* node,

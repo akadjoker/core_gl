@@ -4,6 +4,11 @@
 #include <cstdio>
 #include <cstring>
 
+// Vendored miniz (scene/src/miniz.h, public domain) — declarations only
+// here; the actual implementation is compiled once in miniz_impl.cpp.
+#define MINIZ_HEADER_FILE_ONLY
+#include "miniz.h"
+
 namespace fs
 {
 
@@ -25,7 +30,11 @@ static void normalizePath(char* buf, gl::u32 bufSize, const char* src)
 }
 
 Filesystem::Filesystem() = default;
-Filesystem::~Filesystem() = default;
+
+Filesystem::~Filesystem()
+{
+    clearPaths();
+}
 
 void Filesystem::addFolder(const char* path)
 {
@@ -34,21 +43,43 @@ void Filesystem::addFolder(const char* path)
     PathEntry& entry = m_paths[m_pathCount];
     entry.type = PathEntry::FOLDER;
     normalizePath(entry.path, sizeof(entry.path), path);
+    m_archiveHandles[m_pathCount] = nullptr;
     m_pathCount++;
 }
 
+// Mounts a .pk3/.zip as a searchable path, same idea as Quake's own pak
+// search order — files inside are looked up by their archive-relative name
+// (e.g. "textures/base_floor/clang.jpg"), exactly like a real folder.
 void Filesystem::addArchive(const char* path)
 {
     if (!path || m_pathCount >= MAX_PATHS) return;
 
+    mz_zip_archive* zip = new mz_zip_archive();
+    std::memset(zip, 0, sizeof(mz_zip_archive));
+    if (!mz_zip_reader_init_file(zip, path, 0))
+    {
+        delete zip;
+        return; // not a valid zip/pk3 — silently skip, same as a missing folder
+    }
+
     PathEntry& entry = m_paths[m_pathCount];
     entry.type = PathEntry::ARCHIVE;
     normalizePath(entry.path, sizeof(entry.path), path);
+    m_archiveHandles[m_pathCount] = zip;
     m_pathCount++;
 }
 
 void Filesystem::clearPaths()
 {
+    for (gl::u32 i = 0; i < m_pathCount; ++i)
+    {
+        if (m_paths[i].type != PathEntry::ARCHIVE) continue;
+        mz_zip_archive* zip = static_cast<mz_zip_archive*>(m_archiveHandles[i]);
+        if (!zip) continue;
+        mz_zip_reader_end(zip);
+        delete zip;
+        m_archiveHandles[i] = nullptr;
+    }
     m_pathCount = 0;
 }
 
@@ -62,7 +93,16 @@ bool Filesystem::exists(const char* filename)
     if (iface->exists(filename)) return true;
 
     char resolved[512];
-    return resolvePath(filename, resolved, sizeof(resolved));
+    if (resolvePath(filename, resolved, sizeof(resolved))) return true;
+
+    for (gl::u32 i = 0; i < m_pathCount; ++i)
+    {
+        if (m_paths[i].type != PathEntry::ARCHIVE) continue;
+        mz_zip_archive* zip = static_cast<mz_zip_archive*>(m_archiveHandles[i]);
+        if (!zip) continue;
+        if (mz_zip_reader_locate_file(zip, filename, nullptr, 0) >= 0) return true;
+    }
+    return false;
 }
 
 bool Filesystem::resolvePath(const char* filename, char* outPath, gl::u32 outSize)
@@ -132,6 +172,26 @@ bool Filesystem::readFile(const char* filename, scene::ByteArray& out)
     if (resolvePath(filename, resolved, sizeof(resolved)))
     {
         return readFileViaIO(resolved, out);
+    }
+
+    // Not a real file anywhere on disk — try each mounted .pk3/.zip in
+    // registration order (same "first match wins" convention as folders).
+    for (gl::u32 i = 0; i < m_pathCount; ++i)
+    {
+        if (m_paths[i].type != PathEntry::ARCHIVE) continue;
+        mz_zip_archive* zip = static_cast<mz_zip_archive*>(m_archiveHandles[i]);
+        if (!zip) continue;
+
+        size_t extractedSize = 0;
+        void* data = mz_zip_reader_extract_file_to_heap(zip, filename, &extractedSize, 0);
+        if (!data) continue;
+
+        out.allocate((gl::u32)extractedSize);
+        if (out.size() == (gl::u32)extractedSize)
+            std::memcpy(out.data(), data, extractedSize);
+        mz_free(data);
+        out.resetCursor();
+        return out.size() == (gl::u32)extractedSize;
     }
 
     return false;

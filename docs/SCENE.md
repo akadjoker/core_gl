@@ -14,33 +14,35 @@ asset management, and virtual file I/O.
 #include <scene/Mesh.hpp>
 #include <scene/MeshInstance.hpp>
 #include <scene/Material.hpp>
+#include <scene/AssetManager.hpp>
 
-scene::Scene           scn;
-scene::SceneRenderer   renderer;
+Scene           scene;
+SceneRenderer   renderer;
 
 renderer.init();
 
-// Build a simple scene
-auto* cube_mesh = scn.create_mesh();
-coregl::MeshPrimitives::cube(*cube_mesh);
-cube_mesh->upload();
+// Build a simple scene — primitives come from the AssetManager singleton,
+// which owns the Mesh memory and uploads it. Do not call primitives::
+// directly; it is an internal implementation detail.
+AssetManager& assets = AssetManager::instance();
+Mesh* cube_mesh = assets.createCube("cube", 1.f, 1.f, 1.f);
 
-auto* mat = scn.create_material();
+Material* mat = scene.create_material();
 mat->base_color = { 0.8f, 0.4f, 0.2f };
 
-auto* node = scn.root()->create_child<scene::MeshInstance>();
+auto* node = scene.root().create_child<MeshInstance>();
 node->set_mesh(cube_mesh);
 node->set_material(mat);
 node->set_position({ 0, 0, -5 });
 
 // Main loop
-scn.ready();
+scene.ready();
 while (running) {
-    scn.update(dt);
-    renderer.render(scn, width, height);
+    scene.update(dt);
+    renderer.render(scene, width, height);
 }
 renderer.release();
-scn.release_gpu();
+scene.release_gpu();
 ```
 
 ---
@@ -58,7 +60,7 @@ scn.release_gpu();
    - [Material](#material)
    - [MeshInstance](#meshinstance)
    - [MeshLoader](#meshloader)
-   - [MeshPrimitives](#meshprimitives)
+   - [AssetManager](#assetmanager)
 3. [Rendering Pipeline](#3-rendering-pipeline)
    - [SceneRenderer](#scenerenderer)
    - [SceneOctree](#sceneoctree)
@@ -178,8 +180,7 @@ enum class NodeType : int {
 | `_release_gpu()` | Children first | Free GPU resources before context destruction |
 
 ```cpp
-auto* root = scn.root();
-auto* child = root->create_child<scene::Node3D>();
+auto* child = scene.root().create_child<scene::Node3D>();
 child->set_name("Player");
 ```
 
@@ -287,9 +288,9 @@ struct RenderItem {
 | `release_gpu()` | Free all GPU resources |
 
 ```cpp
-auto* cam = scn.root()->create_child<scene::Camera3D>();
+auto* cam = scene.root().create_child<scene::Camera3D>();
 cam->set_perspective(60.0f, 0.1f, 1000.0f);
-scn.set_active_camera(cam);
+scene.set_active_camera(cam);
 ```
 
 ---
@@ -315,7 +316,7 @@ conversion.
 
 ```cpp
 cam->set_perspective(60.0f, 0.1f, 1000.0f);
-coregl::Ray ray = cam->screen_to_ray(mouseX, mouseY, width, height);
+Ray ray = cam->screen_to_ray(mouseX, mouseY, width, height);
 ```
 
 ---
@@ -393,7 +394,7 @@ struct Surface {
 | `get_surface_count()` | Number of surfaces |
 
 ```cpp
-auto* mesh = scn.create_mesh();
+auto* mesh = scene.create_mesh();
 std::vector<scene::MeshVertex> verts = { ... };
 std::vector<unsigned int>       indices = { ... };
 mesh->set_data(verts, indices);
@@ -458,7 +459,7 @@ Scene graph node that renders a `Mesh`. Inherits `Node3D`.
 | `set_visible(bool)` | Toggle visibility |
 
 ```cpp
-auto* inst = scn.root()->create_child<scene::MeshInstance>();
+auto* inst = scene.root().create_child<scene::MeshInstance>();
 inst->set_mesh(cube_mesh);
 inst->set_material(mat);
 inst->set_position({ 0, 0, -5 });
@@ -503,28 +504,49 @@ Mesh* mesh = MeshLoader::load("assets/models/player.mesh");
 
 ---
 
-### MeshPrimitives
+### AssetManager
 
-`#include <scene/MeshPrimitives.hpp>`
+`#include <scene/AssetManager.hpp>`
 
-Procedural geometry generators that fill a `Mesh` without any external file.
+A **singleton** that owns all `Mesh` assets in the engine. It handles creation,
+GPU upload, caching by name, and lifetime management. This is the **only** public
+way to create meshes — do not call the internal `primitives::` namespace directly.
 
-**Available Primitives:**
-
-| Function | Description |
-|----------|-------------|
-| `cube(Mesh&, float size)` | Unit cube |
-| `plane(Mesh&, float w, float h, int segX, int segY)` | Segmented plane |
-| `hills_plane(Mesh&, float w, float h, int seg)` | Plane with sinusoidal hills |
-| `heightfield(Mesh&, float* heights, int w, int h, float scale)` | Heightmap terrain |
-| `sphere(Mesh&, float radius, int slices, int stacks)` | UV sphere |
-| `cylinder(Mesh&, float radius, float height, int segments)` | Solid cylinder |
-| `cone(Mesh&, float radius, float height, int segments)` | Solid cone |
-| `capsule(Mesh&, float radius, float height, int segments)` | Capsule (cylinder + hemispheres) |
+**Access:**
 
 ```cpp
-scene::MeshPrimitives::sphere(*mesh, 1.0f, 32, 16);
-scene::MeshPrimitives::capsule(*mesh, 0.5f, 2.0f, 16);
+AssetManager& assets = AssetManager::instance();
+```
+
+**Loading meshes from files:**
+
+| Method | Description |
+|--------|-------------|
+| `Mesh* loadMesh(name, path)` | Load any supported format (.obj, .ms3d, .gltf, …) |
+| `Mesh* getMesh(name)` | Retrieve a previously loaded/created mesh by name |
+| `Mesh* createMesh(name)` | Create an empty mesh (for manual vertex fill) |
+
+**Procedural mesh creation (owned & uploaded by AssetManager):**
+
+| Method | Parameters | Description |
+|--------|------------|-------------|
+| `createCube(name, sx, sy, sz)` | size per axis | Box geometry |
+| `createPlane(name, w, d, uvTiles, segX, segZ)` | width, depth, UV tiling, segments | Flat plane |
+| `createSphere(name, radius, rings, slices)` | radius, vertical/horizontal divisions | UV sphere |
+| `createCylinder(name, radius, height, slices)` | radius, height, angular segments | Solid cylinder |
+| `createCone(name, radius, height, slices)` | radius, height, angular segments | Solid cone |
+| `createCapsule(name, radius, height, rings, slices)` | radius, cylinder height, divisions | Capsule (cylinder + hemispheres) |
+| `createTorus(name, majorR, minorR, majorSeg, minorSeg)` | radii, segment counts | Torus |
+| `createHillsPlane(name, w, d, segX, segZ, heightFn, uvTiles)` | size, segments, height callback | Procedural rolling hills |
+| `createHeightfield(name, heights[], w, h, cellSize, uvTiles)` | height array, grid size, cell size | Heightmap terrain |
+
+**Usage:**
+
+```cpp
+AssetManager& assets = AssetManager::instance();
+
+Mesh* sphere = assets.createSphere("my_sphere", 1.0f, 16, 24);
+Mesh* cap    = assets.createCapsule("player_body", 0.5f, 2.0f, 8, 24);
 ```
 
 ---
@@ -628,12 +650,12 @@ renderer.init();
 renderer.set_skybox(cubemap_tex);
 renderer.enable_shadows(4, 2048, 200.0f);
 renderer.enable_post(true, true); // godrays + SSAO
-renderer.build_spatial_index(scn);
+renderer.build_spatial_index(scene);
 
 // Main loop
 while (running) {
-    scn.update(dt);
-    renderer.render(scn, width, height);
+    scene.update(dt);
+    renderer.render(scene, width, height);
 }
 ```
 
@@ -938,7 +960,7 @@ struct Particle {
 | `TurbulenceAffector` | Procedural noise-based jitter |
 
 ```cpp
-auto* ps = scn.root()->create_child<scene::ParticleSystemNode>();
+auto* ps = scene.root().create_child<scene::ParticleSystemNode>();
 ps->set_emission_rate(100.0f);     // particles per second
 ps->set_emitter_shape(scene::EmitterShape::Sphere);
 ps->set_blend_mode(scene::ParticleBlendMode::Additive);
@@ -988,7 +1010,7 @@ dynamic VBO rebuild per frame and **reuses the particle shader pass** for
 efficient rendering.
 
 ```cpp
-auto* decals = scn.root()->create_child<scene::DecalSystemNode>();
+auto* decals = scene.root().create_child<scene::DecalSystemNode>();
 decals->add({ x, y, z }, 1.0f, bulletHoleTex);
 ```
 
@@ -1012,7 +1034,7 @@ VBO per frame and **reuses the particle shader**.
 | Multi-chain | `MAX_CHAINS = 4` independent trails |
 
 ```cpp
-auto* trail = scn.root()->create_child<scene::RibbonTrailNode>();
+auto* trail = scene.root().create_child<scene::RibbonTrailNode>();
 trail->set_max_points(0, 50);     // chain 0, 50 points
 trail->set_width(0, 0.5f);       // chain 0 width
 trail->add_point(0, node->get_position());
@@ -1029,7 +1051,7 @@ Renders a series of flare sprites whose visibility and intensity are determined
 by whether the light source is occluded by geometry. Uses dynamic VBO per frame.
 
 ```cpp
-auto* flare = scn.root()->create_child<scene::LensFlareNode>();
+auto* flare = scene.root().create_child<scene::LensFlareNode>();
 flare->set_position({ 100, 200, -500 });
 flare->set_texture(flareTex);
 flare->set_intensity(1.0f);
@@ -1103,7 +1125,7 @@ mirror. Reflective face is **+Y**.
 | `reflectivity` | `0.15` | Fresnel reflectivity at normal incidence |
 
 ```cpp
-auto* mirror = scn.root()->create_child<scene::MirrorNode>();
+auto* mirror = scene.root().create_child<scene::MirrorNode>();
 mirror->set_size(4.0f, 4.0f);
 mirror->set_position({ 0, 2, 0 });
 ```
@@ -1149,7 +1171,7 @@ static const int BLOCK_VERTS = 33; // vertices per block edge (32×32 cells)
 | `raycast(Ray ray, Vec3& hit)` | Ray-terrain intersection test |
 
 ```cpp
-auto* terrain = scn.root()->create_child<scene::TerrainNode>();
+auto* terrain = scene.root().create_child<scene::TerrainNode>();
 terrain->load_heightmap("assets/terrain/heightmap.png");
 terrain->build();
 terrain->upload();
@@ -1175,7 +1197,7 @@ float my_height_func(float x, float z) {
     return sin(x * 0.1f) * cos(z * 0.1f) * 10.0f;
 }
 
-auto* terrain = scn.root()->create_child<scene::InfiniteTerrainNode>();
+auto* terrain = scene.root().create_child<scene::InfiniteTerrainNode>();
 terrain->set_height_function(my_height_func);
 terrain->set_view_distance(500.0f);
 ```
@@ -1223,7 +1245,7 @@ based on distance to camera.
 | `raycast(Ray, Vec3& hit)` | Ray intersection |
 
 ```cpp
-auto* terrain = scn.root()->create_child<scene::TerrainLodNode>();
+auto* terrain = scene.root().create_child<scene::TerrainLodNode>();
 terrain->set_heightmap(heights, 512, 512);
 terrain->build(64);         // 64×64 patches
 terrain->set_lod_threshold(80.0f);
@@ -1300,7 +1322,7 @@ std::unordered_map<uint64_t, std::vector<float>> m_edits;
 ```
 
 ```cpp
-auto* terrain = scn.root()->create_child<scene::TerrainPagingNode>();
+auto* terrain = scene.root().create_child<scene::TerrainPagingNode>();
 terrain->set_height_function(my_terrain_height);
 terrain->set_view_distance(2000.0f);
 terrain->add_layer(grassTex,  40.0f);
@@ -1339,7 +1361,7 @@ TiledTerrainNode(int tilesInSide = 8, float patchLen = 1.0f,
 - Simple and fast for retro/grid-based terrain
 
 ```cpp
-auto* terrain = scn.root()->create_child<scene::TiledTerrainNode>(16, 4.0f);
+auto* terrain = scene.root().create_child<scene::TiledTerrainNode>(16, 4.0f);
 terrain->set_tilemap(tiles, 64, 64);
 terrain->set_atlas(atlasTex, 4, 4); // 4×4 tiles in atlas
 ```

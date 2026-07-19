@@ -40,6 +40,13 @@ private:
     static constexpr gl::u32 MAX_PATHS = 32;
     PathEntry m_paths[MAX_PATHS];
     gl::u32 m_pathCount = 0;
+
+    // ARCHIVE entries: opaque mz_zip_archive* (heap-allocated), one per
+    // m_paths[i] where type==ARCHIVE, opened in addArchive() and kept for
+    // the Filesystem's lifetime — kept void* here so miniz.h (vendored,
+    // scene/src/miniz.h) doesn't have to be included by every consumer of
+    // this header, only by Filesystem.cpp itself.
+    void* m_archiveHandles[MAX_PATHS] = {};
 };
 
 Filesystem& getFilesystem();
