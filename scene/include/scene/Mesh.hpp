@@ -50,6 +50,22 @@ public:
     void compute_tangents();
     void compute_bounds();
 
+    // Modify a surface's vertices in-place. Only works while CPU data is still
+    // resident (i.e. before free_cpu()). Re-uploads the VBO if the mesh has
+    // already been uploaded.
+    void transform_surface(int surfaceIndex, const Mat4& transform);
+    void scale_surface(int surfaceIndex, const Vec3& scale, const Vec3& pivot);
+    void remove_surface(int surfaceIndex); // sets index_count to 0
+
+    // Debug aid for picking which surface to hand to transform_surface/
+    // scale_surface/remove_surface before any raycast-based picking exists.
+    // Logs index/material_slot/vertex count/world bounds for every surface
+    // — e.g. bounds.min.y close to 0 across a wide x/z span is almost
+    // always the floor. Pair with SceneRenderer::set_debug_surface_index()
+    // to draw a box around one surface by that same index — no material or
+    // shader involved, just line geometry.
+    void dump_surfaces(const char* meshName = "") const;
+
     // Optional lightmap UVs: separate VBO (Vec2 per vertex, same count as
     // vertices). Only BSP meshes use this — other meshes stay unchanged.
     void set_lightmap_uvs(const Vec2* uvs, u32 count);
@@ -103,6 +119,7 @@ private:
     std::vector<Surface> m_surfaces;
     std::vector<Material*> m_materials; // owned
     BoundingBox m_bounds;
+
     gl::Buffer m_vbo;
     gl::Buffer m_ibo;
     gl::VertexArray m_vao;

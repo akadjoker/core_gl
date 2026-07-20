@@ -56,6 +56,14 @@ public:
     void setOctree(Octree* t)   { m_octree = t; m_quadtree = nullptr; }
     void setQuadtree(Quadtree* t) { m_quadtree = t; m_octree = nullptr; }
 
+    // Ellipsoid-space epsilon kept between the body and any surface it
+    // rests against (CollisionPacket::slidingSpeed default is 0.005 — tiny,
+    // easy to get pinned in a corner with). Per-instance, not global: only
+    // callers that call this see a different value, everyone else keeps
+    // the 0.005 default.
+    void setSlidingSpeed(float s) { m_slidingSpeed = s; }
+    float slidingSpeed() const { return m_slidingSpeed; }
+
     // ── Slide ──
     Vec3 collideAndSlide(const Vec3& position, const Vec3& velocity, const Vec3& radius,
                          const Vec3& gravity, bool& outGrounded);
@@ -72,6 +80,7 @@ private:
     std::vector<Triangle> m_triangles;
     Octree*   m_octree = nullptr;
     Quadtree* m_quadtree = nullptr;
+    float m_slidingSpeed = 0.005f;
 
     void getCandidates(const Vec3& ePos, const Vec3& eRadius,
                        std::vector<const Triangle*>& out) const;

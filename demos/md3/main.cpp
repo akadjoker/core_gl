@@ -353,9 +353,9 @@ int main(int argc, char** argv)
                 }
                 if (lower && ev.key.keysym.sym == SDLK_1) lower->play("walk", 0.3f);
                 if (lower && ev.key.keysym.sym == SDLK_2) lower->play("idle", 0.3f);
-              //  if (holder && ev.key.keysym.sym == SDLK_3) holder->play("reload", 0.3f);
-              //  if (holder && ev.key.keysym.sym == SDLK_4) holder->play("fire", 0.3f);
-              //  if (holder && ev.key.keysym.sym == SDLK_5) holder->play("draw", 0.3f);
+                // if (holder && ev.key.keysym.sym == SDLK_3) holder->play("reload", 0.3f);
+                // if (holder && ev.key.keysym.sym == SDLK_4) holder->play("fire", 0.3f);
+                // if (holder && ev.key.keysym.sym == SDLK_5) holder->play("draw", 0.3f);
             }
             fly.handle(ev);
         }

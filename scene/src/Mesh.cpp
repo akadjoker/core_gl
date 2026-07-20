@@ -1,5 +1,7 @@
 #include "scene/Mesh.hpp"
 #include "scene/Material.hpp"
+#include <coregl/gl_log.hpp>
+#include <cmath>
 
 Mesh::~Mesh()
 {
@@ -58,6 +60,66 @@ void Mesh::compute_bounds()
         mx = mx.Max(v.position);
     }
     m_bounds = BoundingBox(mn, mx);
+}
+
+void Mesh::transform_surface(int surfaceIndex, const Mat4& transform)
+{
+    if (surfaceIndex < 0 || surfaceIndex >= (int)m_surfaces.size()) return;
+    if (m_vertices.empty()) return;
+
+    const Surface& s = m_surfaces[surfaceIndex];
+    for (u32 i = s.first_index; i < s.first_index + s.index_count; ++i)
+    {
+        u32 vi = m_indices[i];
+        MeshVertex& v = m_vertices[vi];
+        v.position = Mat4::Transform(transform, v.position);
+        v.normal = Mat4::TransformNormal(transform, v.normal).normalized();
+    }
+
+    compute_tangents();
+    compute_bounds();
+
+    if (m_uploaded)
+    {
+        m_vbo.Upload(m_vertices.data(), m_vertices.size() * sizeof(MeshVertex));
+        for (Surface& surf : m_surfaces)
+        {
+            Vec3 mn = m_vertices[m_indices[surf.first_index]].position;
+            Vec3 mx = mn;
+            for (u32 i = surf.first_index; i < surf.first_index + surf.index_count; ++i)
+            {
+                const Vec3& p = m_vertices[m_indices[i]].position;
+                mn = mn.Min(p);
+                mx = mx.Max(p);
+            }
+            surf.bounds = BoundingBox(mn, mx);
+        }
+    }
+}
+
+void Mesh::scale_surface(int surfaceIndex, const Vec3& scale, const Vec3& pivot)
+{
+    Mat4 t = Mat4::Translate(pivot) * Mat4::Scale(scale.x, scale.y, scale.z) *
+             Mat4::Translate(-pivot);
+    transform_surface(surfaceIndex, t);
+}
+
+void Mesh::remove_surface(int surfaceIndex)
+{
+    if (surfaceIndex < 0 || surfaceIndex >= (int)m_surfaces.size()) return;
+    m_surfaces[surfaceIndex].index_count = 0;
+}
+
+void Mesh::dump_surfaces(const char* meshName) const
+{
+    gl::Log::Info("[Mesh] '%s' — %zu surface(s):", meshName ? meshName : "", m_surfaces.size());
+    for (size_t i = 0; i < m_surfaces.size(); ++i)
+    {
+        const Surface& s = m_surfaces[i];
+        gl::Log::Info("  [%zu] material_slot=%d verts=%u bounds=(%.2f,%.2f,%.2f)-(%.2f,%.2f,%.2f)",
+                     i, s.material_slot, s.index_count, s.bounds.min.x, s.bounds.min.y,
+                     s.bounds.min.z, s.bounds.max.x, s.bounds.max.y, s.bounds.max.z);
+    }
 }
 
 void Mesh::compute_normals()

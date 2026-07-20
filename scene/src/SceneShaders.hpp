@@ -126,11 +126,16 @@ CLIP_VARYING
 
 void main()
 {
-    vec3 albedo = texture(u_diffuse, v_uv).rgb * u_baseColor;
+    vec4 tex = texture(u_diffuse, v_uv);
+    vec3 albedo = tex.rgb * u_baseColor;
     vec3 lm     = texture(u_detail, v_uv2).rgb;
     vec3 lit = albedo * lm * 6.0;
 
-    OutColor = vec4(lit, 1.0);
+    // Alpha carried through for shader-script surfaces drawn in the blend
+    // pass (glass/flames/fences — see BspInstance materials' `blend` flag,
+    // SceneRenderer's BSP draw loop). Opaque surfaces ignore it (blending
+    // is off), so this is free for them.
+    OutColor = vec4(lit, tex.a);
     CLIP_APPLY
 }
 )";
@@ -166,6 +171,22 @@ uniform float u_splits[4]; // far edge of each cascade, in view depth
 uniform int u_cascadeCount; // 0 = shadows off
 uniform int u_showCascades;
 uniform vec2 u_shadowMapSize;
+// world-space push-along-normal before sampling the shadow map, to dodge
+// self-shadow acne. A fixed constant tuned for one demo's object scale
+// becomes visibly wrong (peter-panning/detached shadows) at another scale
+// — e.g. a small-scale scene where a whole character is ~1 world unit
+// tall makes a 0.05-unit push ~5% of its height. Each SceneRenderer user
+// sets this via set_shadow_normal_bias() to match its own scene scale.
+uniform float u_shadowNormalBias;
+// debug (SceneRenderer::set_debug_shadow_clip): tints a fragment magenta
+// instead of shading it normally whenever its shadow-space projection
+// falls outside the active cascade's own light-space box — a hard,
+// un-fadeable snap to "fully lit" (see shadowOcclusion's early-out) that
+// no amount of bias/polygon-offset tuning can fix, since the point isn't
+// being tested against the shadow map at all at that point, it's just
+// assumed unshadowed. Distinguishes that failure mode from ordinary
+// per-pixel bias artifacts.
+uniform int u_debugShadowClip;
 
 // ── local lights (point/spot), up to 4 of each ──
 uniform int u_pointCount;
@@ -231,15 +252,24 @@ float shadowGrid(int layer, vec3 p)
     return occ / 25.0;
 }
 
-// 0 = fully lit, 1 = fully shadowed
-float shadowOcclusion(int layer)
+// 0 = fully lit, 1 = fully shadowed. `clipped` reports whether the
+// receiver point fell outside this cascade's own light-space box (a HARD
+// snap to fully-lit, no falloff — a bug distinct from per-pixel bias: no
+// amount of shadow-bias tuning fixes a point being outside the frustum
+// entirely) — for u_debugShadowClip's visualization only, harmless to
+// ignore otherwise.
+float shadowOcclusion(int layer, out bool clipped)
 {
-    vec3 offsetPos = v_worldPos + normalize(v_normal) * (0.05 + 0.05 * float(layer));
+    vec3 offsetPos = v_worldPos + normalize(v_normal) * (u_shadowNormalBias * (1.0 + float(layer)));
     vec4 lp = u_lightViewProj[layer] * vec4(offsetPos, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
 
     if (p.z < 0.0 || p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0)
+    {
+        clipped = true;
         return 0.0;
+    }
+    clipped = false;
 
     if (layer <= 1) return shadowPoisson(layer, p);
     return shadowGrid(layer, p);
@@ -319,6 +349,7 @@ void main()
 
     int layer = 0;
     float occlusion = 0.0;
+    bool shadowClipped = false;
 
     if (u_cascadeCount > 0)
     {
@@ -332,7 +363,9 @@ void main()
             }
         }
 
-        float shadow0 = shadowOcclusion(layer);
+        bool clipped0;
+        float shadow0 = shadowOcclusion(layer, clipped0);
+        shadowClipped = clipped0;
 
         if (layer < u_cascadeCount - 1)
         {
@@ -341,14 +374,43 @@ void main()
             float blendStart = mix(cascadeNear, cascadeFar, 0.85);
             float blend = smoothstep(blendStart, cascadeFar, v_viewDepth);
 
-            occlusion = (blend > 0.001)
-                            ? mix(shadow0, shadowOcclusion(layer + 1), blend)
-                            : shadow0;
+            if (blend > 0.001)
+            {
+                bool clipped1;
+                float shadow1 = shadowOcclusion(layer + 1, clipped1);
+                occlusion = mix(shadow0, shadow1, blend);
+                shadowClipped = clipped0 || clipped1;
+            }
+            else
+                occlusion = shadow0;
         }
         else
         {
             occlusion = shadow0;
         }
+    }
+
+    // debug modes (SceneRenderer::set_debug_shadow_clip): 1 = magenta
+    // wherever the receiver fell outside its cascade's own light-space box
+    // (see shadowOcclusion's early-out — bias/offset tuning can't fix
+    // that, the point isn't tested against the shadow map at all there);
+    // 2 = raw computed `occlusion` as grayscale EVERYWHERE, bypassing
+    // normal lighting entirely — shows whether the shadow test itself is
+    // genuinely returning "not occluded" at a suspect line (a gap in what
+    // got rasterized into the depth map, e.g. a missing/degenerate caster
+    // triangle) versus the line being introduced somewhere later in the
+    // lighting math.
+    if (u_debugShadowClip == 1 && shadowClipped)
+    {
+        OutColor = vec4(1.0, 0.0, 1.0, 1.0);
+        OutNormal = vec4(normalize(v_normalView), 0.0);
+        return;
+    }
+    if (u_debugShadowClip == 2)
+    {
+        OutColor = vec4(vec3(occlusion), 1.0);
+        OutNormal = vec4(normalize(v_normalView), 0.0);
+        return;
     }
 
     vec3 n = normalize(v_normal);
@@ -1444,6 +1506,7 @@ uniform mat4 u_lightViewProj[4];
 uniform float u_splits[4]; // far edge of each cascade, in view depth
 uniform int u_cascadeCount; // 0 = shadows off
 uniform vec2 u_shadowMapSize;
+uniform float u_shadowNormalBias; // see kFwdFS's declaration of the same name
 
 // linear distance fog: x = start, y = end; y <= 0 disables
 uniform vec3 u_fogColor;
@@ -1496,7 +1559,7 @@ float shadowGrid(int layer, vec3 p)
 
 float shadowOcclusion(int layer)
 {
-    vec3 offsetPos = v_worldPos + normalize(v_normal) * (0.05 + 0.05 * float(layer));
+    vec3 offsetPos = v_worldPos + normalize(v_normal) * (u_shadowNormalBias * (1.0 + float(layer)));
     vec4 lp = u_lightViewProj[layer] * vec4(offsetPos, 1.0);
     vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
     if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 0.0;

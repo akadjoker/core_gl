@@ -141,13 +141,27 @@ bool CollisionSystem::checkTriangle(CollisionPacket& packet, const Triangle& wor
         testEdge(p1, p2); testEdge(p2, p3); testEdge(p3, p1);
     }
 
-    if (found && t >= 0.f && t <= packet.nearestDistance)
+    if (found)
     {
-        packet.nearestDistance = t;
-        packet.intersectionPoint = colPoint;
-        packet.foundCollision = true;
-        packet.intersectionTri = &worldTri;
-        return true;
+        // t is a FRACTION of packet.eVelocity (0..1 along this pass's
+        // velocity), not a distance — nearestDistance/slidingSpeed
+        // downstream are real ellipsoid-space distances (collideWithWorld
+        // subtracts slidingSpeed from nearestDistance, then scales a
+        // normalized direction by it). Irrlicht converts this exact way
+        // (CSceneCollisionManager::testTriangleIntersection: `distToCollision
+        // = t * colData->velocity.getLength()`) before comparing/storing —
+        // storing the raw fraction here instead made nearestDistance
+        // unitless-vs-slidingSpeed's real distance, which is what made
+        // sliding/stopping distances come out wrong throughout.
+        float distToCollision = t * packet.eVelocity.length();
+        if (distToCollision <= packet.nearestDistance)
+        {
+            packet.nearestDistance = distToCollision;
+            packet.intersectionPoint = colPoint;
+            packet.foundCollision = true;
+            packet.intersectionTri = &worldTri;
+            return true;
+        }
     }
     return false;
 }
@@ -196,6 +210,7 @@ Vec3 CollisionSystem::collideAndSlide(const Vec3& position, const Vec3& velocity
 {
     CollisionPacket packet;
     packet.eRadius = radius;
+    packet.slidingSpeed = m_slidingSpeed;
     packet.R3Position = position; packet.R3Velocity = velocity;
     Vec3 ePos = cdiv(position, radius), eVel = cdiv(velocity, radius);
     Vec3 finalEPos = collideWithWorld(0, packet, ePos, eVel);
@@ -232,6 +247,27 @@ bool CollisionSystem::rayCast(const Ray& ray, float maxDist, CollisionInfo& out)
 {
     out = {};
     out.distance = maxDist;
+
+    // Same broadphase getCandidates() uses for the slide — walk the octree
+    // instead of every triangle in the map when one's set, so a per-frame
+    // ground probe (CharacterBehavior-style) doesn't linear-scan the whole
+    // mesh.
+    if (m_octree)
+    {
+        std::vector<const Triangle*> candidates;
+        m_octree->queryRay(ray, maxDist, candidates);
+        for (const Triangle* tri : candidates)
+        {
+            float t = rayTriT(*tri, ray.origin, ray.direction);
+            if (t > 0.f && t < out.distance)
+            {
+                out.hit = true; out.distance = t; out.point = ray.pointAt(t);
+                out.normal = tri->normal(); out.triangle = tri;
+            }
+        }
+        return out.hit;
+    }
+
     for (const auto& tri : m_triangles)
     {
         float t = rayTriT(tri, ray.origin, ray.direction);

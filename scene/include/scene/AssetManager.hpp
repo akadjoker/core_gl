@@ -7,6 +7,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 class Mesh;
 class SkinnedMesh;
@@ -106,7 +107,8 @@ public:
     Mesh* load_bsp_mesh(const char* name, const char* path,
                      std::vector<Material*>& out_mats,
                      const char* textureDir = "",
-                     BspInstance* collision = nullptr);
+                     BspInstance* collision = nullptr,
+                     std::unordered_map<int, Mesh*>* out_modelMeshes = nullptr);
 
     // Standalone collision-only load: reads `path` itself and fills `inst`'s
     // planes/nodes/leafs/leafbrushes/brushes/brushsides/models/entities data
@@ -173,6 +175,21 @@ public:
     // AssetManager::loadSkinnedMesh).
     Mesh* load_ms3d_mesh(const char* name, const char* path,
                          std::vector<Material*>& out_mats, const char* textureDir = "");
+
+    // Loads a plain Wavefront .obj (+ companion .mtl, via mtllib) — geometry
+    // only, the universal hand-edit round-trip format (see
+    // tools/bspx_to_obj.py, which exports engine geometry into this same
+    // shape for editing in Blender). Faces are fan-triangulated if the file
+    // has quads/ngons; missing vn is filled in with Mesh::compute_normals()
+    // (OBJ doesn't require normals — e.g. a bare export before shading is
+    // added). One Material per distinct usemtl name actually used (or a
+    // single default if the file references none), owned by the Mesh (see
+    // load_bsp_mesh's comment above) — `out_mats` is a view, not a caller
+    // owner. `textureDir` overrides where map_Kd filenames are looked up
+    // (defaults to the .obj file's own directory, same as every other
+    // loader here).
+    Mesh* load_obj_mesh(const char* name, const char* path,
+                        std::vector<Material*>& out_mats, const char* textureDir = "");
 
     // Extracts the isosurface (density == 0) of a volume::Source via
     // marching cubes over a regular grid spanning [from, to], with

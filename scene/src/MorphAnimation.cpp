@@ -145,8 +145,18 @@ void MorphAnimator::write_vertices(const MorphKeyframes& kf, std::vector<MeshVer
 
 Mat4 MorphAnimator::tag_transform(const MorphTags& tags, int tagIndex) const
 {
-    if (tags.empty() || tagIndex < 0 || tagIndex >= (int)tags.names.size() || !m_current.clip)
+    if (tags.empty() || tagIndex < 0 || tagIndex >= (int)tags.names.size())
         return Mat4::Identity();
+
+    // No clip playing (e.g. a static single-frame model that never had
+    // add_clip/play called): use the tag's own frame-0 pose instead of
+    // identity, so a model doesn't need a fake dummy clip just to expose
+    // its tags.
+    if (!m_current.clip)
+    {
+        const MorphTagFrame& f0 = tags.perFrame[0][tagIndex];
+        return Mat4::Translate(f0.origin) * Mat4(f0.rotation);
+    }
 
     int a0, b0;
     float t0;

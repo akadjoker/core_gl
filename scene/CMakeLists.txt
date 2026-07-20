@@ -53,6 +53,7 @@ add_library(scene STATIC
     src/IQMLoader.cpp
     src/C3DSLoader.cpp
     src/MS3DLoader.cpp
+    src/ObjLoader.cpp
     src/Input.cpp
     src/Behavior.cpp
     src/FreeFlyBehavior.cpp

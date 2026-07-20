@@ -5,7 +5,7 @@
 
 class CollisionSystem;
 
-// Character controller (ported from tmp/core's CharacterCameraController):
+// Character controller  
 // body with gravity + jump, W/S walk, A/D turn (yaw), left mouse = mouse-look.
 // Collision is optional (CollisionSystem); without it, it falls onto a plane
 // at groundY.

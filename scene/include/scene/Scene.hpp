@@ -74,6 +74,7 @@ public:
     void collect(std::vector<RenderItem>& out, const Frustum* frustum, const SceneOctree* octree);
 
     void collect_bsp(std::vector<class BspInstance*>& out);
+    void collect_bsp_entities(std::vector<class BspEntityInstance*>& out);
 
 private:
     void collect_node(Node* node, std::vector<RenderItem>& out, const Frustum* frustum);

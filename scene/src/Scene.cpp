@@ -161,3 +161,18 @@ void Scene::collect_bsp(std::vector<BspInstance*>& out)
 {
     collect_bsp_node(m_root, out);
 }
+
+static void collect_bsp_entity_node(Node* node, std::vector<BspEntityInstance*>& out)
+{
+    BspEntityInstance* mover = node->as<BspEntityInstance>();
+    if (mover && mover->get_mesh() && mover->get_mesh()->is_uploaded())
+        out.push_back(mover);
+
+    for (Node* child : node->get_children())
+        collect_bsp_entity_node(child, out);
+}
+
+void Scene::collect_bsp_entities(std::vector<BspEntityInstance*>& out)
+{
+    collect_bsp_entity_node(m_root, out);
+}

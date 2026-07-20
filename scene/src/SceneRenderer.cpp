@@ -45,13 +45,24 @@ static void csmSplits(float nearClip, float farClip, float* splits, int numCasca
     }
 }
 
-static float casterDistanceForCascade(int c)
+// Fraction of the scene's own shadow_distance to guarantee as Z-padding
+// per cascade, so casters standing outside a slice's immediate view frustum
+// still get caught. These were originally fixed absolute world units
+// (80/120/180/250, i.e. exactly this ratio of the 300-unit default
+// shadow_distance most demos pass) — fine at that scale, but a fixed
+// absolute floor is scale-blind: a scene whose whole map is, say, 188
+// units across (a human-scale level, not a vehicle-scale one) got at
+// least 80 units of padding on cascade 0 alone, several times its own
+// size, which starves the near cascade's depth-buffer precision exactly
+// where receivers need it most (no per-pixel bias can compensate for
+// that — the precision is gone before biasing even applies).
+static float casterDistanceForCascade(int c, float shadowDistance)
 {
-    static constexpr float kMinCasterDistance[] = {80.0f, 120.0f, 180.0f, 250.0f};
+    static constexpr float kMinCasterFrac[] = {0.27f, 0.4f, 0.6f, 0.83f};
 
-    constexpr int count = int(sizeof(kMinCasterDistance) / sizeof(kMinCasterDistance[0]));
+    constexpr int count = int(sizeof(kMinCasterFrac) / sizeof(kMinCasterFrac[0]));
 
-    return kMinCasterDistance[Clamp(c, 0, count - 1)];
+    return kMinCasterFrac[Clamp(c, 0, count - 1)] * shadowDistance;
 }
  
 // 1. this slice's 8 frustum corners, straight from tan(fov/2) + camera
@@ -66,7 +77,8 @@ static float casterDistanceForCascade(int c)
 // 5. texel-snap by nudging the ortho's translation so world-space origin
 //    (a fixed reference point, not the moving center) lands on a texel
 static Mat4 csmCascadeMatrix(int cascade, float aspect, float fovDeg, const Mat4& view,
-                             const float* splits, const Vec3& lightDir, float shadowMapSize)
+                             const float* splits, const Vec3& lightDir, float shadowMapSize,
+                             float shadowDistance, float& outTexelWorldSize)
 {
     const float zn = splits[cascade], zf = splits[cascade + 1];
     const Mat4 invView = Mat4::Inverse(view); // camera -> world
@@ -95,6 +107,14 @@ static Mat4 csmCascadeMatrix(int cascade, float aspect, float fovDeg, const Mat4
         r = std::max(r, (corners[j] - center).length());
     r = ceilf(r * 16.0f) / 16.0f; // quantize for extra stability
 
+    // one shadow-map texel's world-space footprint for THIS cascade — the
+    // ortho spans [-r, r] (width 2r) across shadowMapSize texels. Grows
+    // with cascade distance automatically (farther cascades cover more
+    // world per texel), so a bias expressed as "N texels" self-scales
+    // with both cascade and overall scene scale, unlike a fixed world-unit
+    // constant.
+    outTexelWorldSize = (2.0f * r) / shadowMapSize;
+
     Mat4 lightView = Mat4::LookAt(center - L * r, center, up);
 
     float zmin = 1e30f, zmax = -1e30f;
@@ -107,7 +127,7 @@ static Mat4 csmCascadeMatrix(int cascade, float aspect, float fovDeg, const Mat4
     //   float zpad = (zmax - zmin) * 0.5f + 5.0f;
     // float zpad = std::max((zmax - zmin) * 0.5f + 5.0f, 100.0f);
 
-    float zpad = std::max((zmax - zmin) * 0.5f + 5.0f, casterDistanceForCascade(cascade));
+    float zpad = std::max((zmax - zmin) * 0.5f + 5.0f, casterDistanceForCascade(cascade, shadowDistance));
 
     Mat4 lightProj = Mat4::Ortho(-r, r, -r, r, -zmax - zpad, -zmin);
 
@@ -163,6 +183,8 @@ bool SceneRenderer::init()
     m_locCascadeCount = m_forward.GetLocation("u_cascadeCount");
     m_locShowCascades = m_forward.GetLocation("u_showCascades");
     m_locShadowSize = m_forward.GetLocation("u_shadowMapSize");
+    m_locShadowNormalBias = m_forward.GetLocation("u_shadowNormalBias");
+    m_locDebugShadowClip = m_forward.GetLocation("u_debugShadowClip");
     m_locPointCount = m_forward.GetLocation("u_pointCount");
     m_locPointPosRange0 = m_forward.GetLocation("u_pointPosRange[0]");
     m_locPointColor0 = m_forward.GetLocation("u_pointColor[0]");
@@ -355,6 +377,8 @@ bool SceneRenderer::init()
     m_white.Load2D(white, 1, 1, gl::TextureFormat::RGBA8);
     const gl::u8 gray[4] = {128, 128, 128, 255}; // neutral for the detail multiply
     m_gray.Load2D(gray, 1, 1, gl::TextureFormat::RGBA8);
+    const gl::u8 bspNeutral[4] = {43, 43, 43, 255}; // ~1/6*255 — see m_bspNeutralLM's comment
+    m_bspNeutralLM.Load2D(bspNeutral, 1, 1, gl::TextureFormat::RGBA8);
 
     m_items.reserve(256);
     m_ready = true;
@@ -413,6 +437,7 @@ void SceneRenderer::release()
     m_shadowFbo.Release();
     m_white.Release();
     m_gray.Release();
+    m_bspNeutralLM.Release();
     m_cascades = 0;
     m_ready = false;
 }
@@ -653,16 +678,19 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
 
     Mat4 view = camera->get_view_matrix();
     for (int c = 0; c < m_cascades; ++c)
+    {
+        float texelWorldSize;
         m_cascadeMat[c] = csmCascadeMatrix(c, camera->get_aspect(), camera->get_fov(), view,
-                                           m_splits, m_lightDir, (float)m_shadowSize);
+                                           m_splits, m_lightDir, (float)m_shadowSize,
+                                           m_shadow_distance, texelWorldSize);
+    }
 
     m_shadowFbo.Bind();
     gl::Renderer::Viewport(0, 0, m_shadowSize, m_shadowSize);
     gl::Renderer::SetDepthTest(true);
     gl::Renderer::SetDepthWrite(true);
     gl::Renderer::SetCull(gl::CullMode::NONE);
-    // front faces are closer to the light, so cull them to avoid self-shadowing
-    gl::Renderer::SetPolygonOffset(true, 2.5f, 4.f);
+    gl::Renderer::SetPolygonOffset(true, m_shadowPolygonOffsetFactor, m_shadowPolygonOffsetUnits);
 
     m_depth.Bind();
     for (int c = 0; c < m_cascades; ++c)
@@ -716,7 +744,7 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
             m_depth.Bind(); // next cascade continues with the static depth shader
         }
     }
-   // gl::Renderer::SetPolygonOffset(false);
+    gl::Renderer::SetPolygonOffset(false);
     gl::Renderer::SetCull(gl::CullMode::BACK);
 }
 
@@ -805,7 +833,7 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
             light->shadow_fbo().Bind();
             gl::Renderer::Viewport(0, 0, light->shadow_resolution, light->shadow_resolution);
             gl::Renderer::Clear(false, true);
-            gl::Renderer::SetPolygonOffset(true, 2.f, 3.f);
+            ////gl::Renderer::SetPolygonOffset(true, 2.f, 3.f);
 
             const Vec3 dir = spot->direction();
             const float fovDeg = spot->outer_angle * 2.f * 57.29578f;
@@ -834,7 +862,7 @@ void SceneRenderer::draw_light_shadows(Scene& scene)
                 gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, item.index_count,
                                           item.first_index);
             }
-            gl::Renderer::SetPolygonOffset(false);
+            //gl::Renderer::SetPolygonOffset(false);
             ++spotSlot;
         }
     }
@@ -991,6 +1019,7 @@ void SceneRenderer::draw_paged_terrain(const RenderView& v, const Frustum& frust
     {
         m_shadowTex.Bind(10);
         m_terrainShader.SetVec2("u_shadowMapSize", (float)m_shadowSize, (float)m_shadowSize);
+        m_terrainShader.SetFloat("u_shadowNormalBias", m_shadowNormalBias);
         for (int i = 0; i < m_cascades; ++i)
         {
             char name[32];
@@ -1071,6 +1100,7 @@ void SceneRenderer::draw_skinned(const RenderView& v, const Frustum& frustum)
     {
         m_shadowTex.Bind(1);
         m_skinned.SetVec2("u_shadowMapSize", (float)m_shadowSize, (float)m_shadowSize);
+        m_skinned.SetFloat("u_shadowNormalBias", m_shadowNormalBias);
         for (int i = 0; i < m_cascades; ++i)
         {
             m_skinned.SetMat4(m_locSkCascadeMat0 + i, m_cascadeMat[i].x);
@@ -1363,7 +1393,9 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
     m_lastCollectMs = std::chrono::duration<double, std::milli>(collectT1 - collectT0).count();
     m_bspInstances.clear();
     scene.collect_bsp(m_bspInstances);
-    m_last_items = (int)m_items.size() + (int)m_bspInstances.size();
+    m_bspEntityInstances.clear();
+    scene.collect_bsp_entities(m_bspEntityInstances);
+    m_last_items = (int)m_items.size() + (int)m_bspInstances.size() + (int)m_bspEntityInstances.size();
 
     if (v.target)
     {
@@ -1420,6 +1452,8 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
         m_shadowTex.Bind(1);
         m_forward.SetInt(m_locShowCascades, m_show_cascades ? 1 : 0);
         m_forward.SetVec2(m_locShadowSize, (float)m_shadowSize, (float)m_shadowSize);
+        m_forward.SetFloat(m_locShadowNormalBias, m_shadowNormalBias);
+        m_forward.SetInt(m_locDebugShadowClip, m_debugShadowClip);
         for (int i = 0; i < m_cascades; ++i)
         {
             m_forward.SetMat4(m_locCascadeMat0 + i, m_cascadeMat[i].x);
@@ -1458,25 +1492,32 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
         prevMat = nullptr;
         gl::Renderer::SetDepthTest(true);
         gl::Renderer::SetDepthWrite(true);
-        for (BspInstance* bsp : m_bspInstances)
-        {
-            Mesh* mesh = bsp->get_mesh();
-            if (!mesh) continue;
-            const Mat4& world = bsp->get_world_matrix();
-            const std::vector<Material*>& mats = bsp->get_materials();
+        gl::Renderer::SetBlend(false);
 
+        // Opaque pass first (blend-flagged surfaces — glass/flames/fences,
+        // see BspInstance materials' `blend`/`additive`, set from
+        // surfaceparm trans / a non-opaque blendFunc in BSPLoader.cpp's
+        // shaderInfoMap — are skipped here and drawn in a second pass
+        // below). Same two-pass idea as any forward renderer: blended
+        // surfaces need the opaque depth buffer already written so they
+        // sort against real geometry, and must not write depth themselves
+        // or they'd occlude whatever's drawn behind them next.
+        auto drawOpaque = [&](Mesh* mesh, const std::vector<Material*>& mats, const Mat4& world)
+        {
+            if (!mesh) return;
             for (u32 s = 0; s < (u32)mesh->surfaces().size(); ++s)
             {
                 const Surface& surf = mesh->surfaces()[s];
                 const Material* mat = (surf.material_slot >= 0 && surf.material_slot < (int)mats.size())
                                           ? mats[surf.material_slot]
                                           : (!mats.empty() ? mats[0] : nullptr);
+                if (mat && mat->blend) continue;
                 if (mat != prevMat)
                 {
                     Vec3 color = mat ? mat->base_color : Vec3(1.f, 1.f, 1.f);
                     gl::Texture* diffuse = (mat && mat->diffuse) ? mat->diffuse : &m_white;
                     diffuse->Bind(0);
-                    gl::Texture* detail = (mat && mat->detail) ? mat->detail : &m_white;
+                    gl::Texture* detail = (mat && mat->detail) ? mat->detail : &m_bspNeutralLM;
                     detail->Bind(6);
                     gl::Renderer::SetCull((mat && mat->double_sided) ? gl::CullMode::NONE : gl::CullMode::BACK);
                     m_bsp.SetVec3(m_locBspColor, color.x, color.y, color.z);
@@ -1487,7 +1528,74 @@ void SceneRenderer::draw_view(Scene& scene, const RenderView& v)
                 gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, surf.index_count,
                                           surf.first_index);
             }
-        }
+        };
+        for (BspInstance* bsp : m_bspInstances)
+            drawOpaque(bsp->get_mesh(), bsp->get_materials(), bsp->get_world_matrix());
+        for (BspEntityInstance* mover : m_bspEntityInstances)
+            drawOpaque(mover->get_mesh(), mover->get_materials(), mover->get_world_matrix());
+
+        // Blend pass: no depth write, no backface cull (seen from both
+        // sides). Not sorted back-to-front — fine for the sparse, mostly
+        // convex torches/glass/fences this covers; would need real sorting
+        // if this ever has to handle large overlapping blended surfaces.
+        gl::Renderer::SetBlend(true);
+        gl::Renderer::SetDepthWrite(false);
+        gl::Renderer::SetCull(gl::CullMode::NONE);
+        prevMat = nullptr;
+        bool wasAdditive = false;
+        bool blendFactorsSet = false; // force an explicit SetBlendFactors on
+                                       // the FIRST blended material this pass
+                                       // — comparing mat->additive against
+                                       // wasAdditive's initial `false` alone
+                                       // meant a non-additive (alpha) first
+                                       // material never triggered the call at
+                                       // all, leaving blend factors as
+                                       // whatever GL state some unrelated
+                                       // earlier draw (or a previous frame)
+                                       // last left them at.
+        auto drawBlend = [&](Mesh* mesh, const std::vector<Material*>& mats, const Mat4& world)
+        {
+            if (!mesh) return;
+            for (u32 s = 0; s < (u32)mesh->surfaces().size(); ++s)
+            {
+                const Surface& surf = mesh->surfaces()[s];
+                const Material* mat = (surf.material_slot >= 0 && surf.material_slot < (int)mats.size())
+                                          ? mats[surf.material_slot]
+                                          : (!mats.empty() ? mats[0] : nullptr);
+                if (!mat || !mat->blend) continue;
+                if (mat != prevMat)
+                {
+                    if (!blendFactorsSet || mat->additive != wasAdditive)
+                    {
+                        if (mat->additive)
+                            gl::Renderer::SetBlendFactors(gl::BlendFactor::ONE, gl::BlendFactor::ONE);
+                        else
+                            gl::Renderer::SetBlendFactors(gl::BlendFactor::SRC_ALPHA,
+                                                          gl::BlendFactor::ONE_MINUS_SRC_ALPHA);
+                        wasAdditive = mat->additive;
+                        blendFactorsSet = true;
+                    }
+                    Vec3 color = mat->base_color;
+                    gl::Texture* diffuse = mat->diffuse ? mat->diffuse : &m_white;
+                    diffuse->Bind(0);
+                    gl::Texture* detail = mat->detail ? mat->detail : &m_bspNeutralLM;
+                    detail->Bind(6);
+                    m_bsp.SetVec3(m_locBspColor, color.x, color.y, color.z);
+                    prevMat = mat;
+                }
+                m_bsp.SetMat4(m_locBspModel, world.x);
+                mesh->vao().Bind();
+                gl::Renderer::DrawIndexed(gl::RenderPrimitive::TRIANGLES, surf.index_count,
+                                          surf.first_index);
+            }
+        };
+        for (BspInstance* bsp : m_bspInstances)
+            drawBlend(bsp->get_mesh(), bsp->get_materials(), bsp->get_world_matrix());
+        for (BspEntityInstance* mover : m_bspEntityInstances)
+            drawBlend(mover->get_mesh(), mover->get_materials(), mover->get_world_matrix());
+        gl::Renderer::SetBlend(false);
+        gl::Renderer::SetDepthWrite(true);
+        gl::Renderer::SetCull(gl::CullMode::BACK);
     }
 
     // splat-mode paged terrain: opaque, in-view like any item (reflections
@@ -2056,6 +2164,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     if (m_show_light_gizmos) draw_light_gizmos(proj * view);
     if (m_show_octree_debug) draw_octree_debug(proj * view);
     if (m_show_mesh_bounds) draw_mesh_bounds_debug(scene.root(), proj * view);
+    draw_debug_surface_index(proj * view);
 
     // snapshot BEFORE the stats panel draws, so the panel reports the
     // scene's cost, not its own
@@ -2304,6 +2413,38 @@ void SceneRenderer::draw_mesh_bounds_debug(Node& root, const Mat4& viewProj)
         Vec3 sz = wb.max - wb.min;
         m_gizmoBatch.CubeWire(c.x, c.y, c.z, sz.x, sz.y, sz.z);
     }
+
+    m_gizmoBatch.Render();
+}
+
+void SceneRenderer::draw_debug_surface_index(const Mat4& viewProj)
+{
+    if (!m_debugSurfaceInst || m_debugSurfaceIndex < 0) return;
+    Mesh* mesh = m_debugSurfaceInst->get_mesh();
+    if (!mesh) return;
+    const std::vector<Surface>& surfaces = mesh->surfaces();
+    if (m_debugSurfaceIndex >= (int)surfaces.size()) return;
+    const Surface& s = surfaces[(size_t)m_debugSurfaceIndex];
+    if (s.index_count == 0) return; // removed via Mesh::remove_surface
+
+    if (!m_gizmoBatchReady)
+    {
+        if (!m_gizmoBatch.Init()) return;
+        m_gizmoBatchReady = true;
+    }
+
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetBlend(false);
+
+    m_gizmoBatch.SetProjection(viewProj.x);
+    m_gizmoBatch.LoadIdentity();
+    m_gizmoBatch.SetMode(gl::RenderPrimitive::LINES);
+    m_gizmoBatch.SetColor(255, 40, 220, 255);
+
+    BoundingBox wb = BoundingBox::TransformBoundingBox(s.bounds, m_debugSurfaceInst->get_world_matrix());
+    Vec3 c = wb.center();
+    Vec3 sz = wb.max - wb.min;
+    m_gizmoBatch.CubeWire(c.x, c.y, c.z, sz.x, sz.y, sz.z);
 
     m_gizmoBatch.Render();
 }

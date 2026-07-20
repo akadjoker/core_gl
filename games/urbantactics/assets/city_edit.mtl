@@ -1,0 +1,60 @@
+newmtl snowyasphalt03
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/SnowyAsphalt03.jpg
+
+newmtl brick61a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Brick61a.jpg
+
+newmtl wall56a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Wall56a.jpg
+
+newmtl wall80
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Wall80.jpg
+
+newmtl wall59a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Wall59a.jpg
+
+newmtl wall70
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Wall70.jpg
+
+newmtl wood17a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Wood17a.jpg
+
+newmtl wood26a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Wood26a.jpg
+
+newmtl brick65a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Brick65a.jpg
+
+newmtl brick52a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Brick52a.jpg
+
+newmtl brick48a
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Brick48a.jpg
+
+newmtl wall69
+Kd 1.0 1.0 1.0
+Ks 0.0 0.0 0.0
+map_Kd textures/maxpayne/Wall69.jpg
+

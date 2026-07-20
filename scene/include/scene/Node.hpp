@@ -35,6 +35,7 @@ enum NodeType : unsigned short
     NT_BSPINSTANCE,
     NT_TAGATTACHMENT,
     NT_BILLBOARD,
+    NT_BSPENTITYINSTANCE,
 
     NT_COUNT
 };

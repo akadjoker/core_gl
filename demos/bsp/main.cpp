@@ -1,12 +1,18 @@
 // BSP map demo: loads a Quake 3 BSP (IBSP v46) through the AssetManager,
-// renders it with CSM shadows, sky, and a first-person camera driven by the
-// map's own collision (BspInstance::moveAndSlide — real brush/plane
-// collision, see BSPLoader.cpp). Movement math runs in the BSP's own raw
-// map-unit space (same space traceBox/moveAndSlide operate in — Quake
-// units, ~32/meter), converted to world/render space only for the camera's
-// actual position (via mapInst->get_world_matrix(), which folds in the
-// 1/32 scale below). Gravity/jump are plain local variables applied by
-// hand each frame, same convention as demos/world_test/main.cpp.
+// renders it with CSM shadows, sky, and a first-person camera driven by a
+// triangle-soup CollisionSystem (Fauerby ellipsoid collideAndSlide, see
+// scene/Collision.hpp) built straight from the BSP's own render mesh —
+// NOT the brush/plane collision in BSPLoader.cpp (that one still exists,
+// still works, just isn't what this demo's movement uses). Movement math
+// runs in the BSP's own raw map-unit space (same space the render mesh's
+// vertices are already in — Quake units, ~32/meter), converted to
+// world/render space only for the camera's actual position (via
+// mapInst->get_world_matrix(), which folds in the 1/32 scale below).
+// Gravity/jump are plain local variables applied by hand each frame, same
+// convention as demos/world_test/main.cpp. Movers (func_door, platforms,
+// rotators, ...) are left as plain entities in mapInst->entities() for
+// now — not drawn, not animated; a mover object gets built from that list
+// whenever that's next up.
 //
 // Controls: mouse-drag look, WASD walk (ground-relative, not noclip),
 //           Space jump, LSHIFT run, F9 stats, P print position,
@@ -21,13 +27,41 @@
 #include <scene/BspInstance.hpp>
 #include <scene/LightNode.hpp>
 #include <scene/Mesh.hpp>
+#include <scene/Collision.hpp>
+#include <scene/Tree.hpp>
 #include <scene/AssetManager.hpp>
 #include <scene/Filesystem.hpp>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <string>
+#include <unordered_map>
 #include <vector>
+
+// Builds a triangle-soup CollisionSystem (Fauerby ellipsoid collideAndSlide,
+// see scene/Collision.hpp) straight out of the BSP's own render mesh —
+// same raw map-unit space traceBox/moveAndSlide use, no extra transform.
+// Movers (func_door, platforms, rotators, ...) are left OUT of this static
+// mesh on purpose: they're just entities in mapInst->entities() for now
+// (classname + keyValues + entity_model_bounds), not drawn or animated —
+// build actual mover objects from that list later, whenever that's next.
+static void buildWorldCollision(Mesh* mesh, CollisionSystem& collision, Octree*& outOctree)
+{
+    const std::vector<MeshVertex>& verts = mesh->vertices();
+    const std::vector<u32>& indices = mesh->indices();
+
+    std::vector<Triangle> tris;
+    tris.reserve(indices.size() / 3);
+    for (size_t i = 0; i + 2 < indices.size(); i += 3)
+        tris.emplace_back(verts[indices[i]].position, verts[indices[i + 1]].position,
+                          verts[indices[i + 2]].position);
+
+    collision.addTriangles(tris);
+    outOctree = new Octree(mesh->bounds());
+    outOctree->build(tris);
+    collision.setOctree(outOctree);
+}
 
 int main(int argc, char** argv)
 {
@@ -35,7 +69,7 @@ int main(int argc, char** argv)
 
     DemoApp app;
     if (!app.Create("coregl - bsp")) return 1;
-    printf("controls: mouse-drag look | WASD walk | Space jump | LSHIFT run | F9 stats | P print pos | T/G time-of-day | B entity gizmos | V crosshair pick | F10 gif\n");
+    printf("controls: mouse-drag look | WASD walk | Space jump | LSHIFT run | F noclip | F9 stats | P print pos | T/G time-of-day | B entity gizmos | V crosshair pick | F10 gif\n");
 
     SceneRenderer renderer;
     if (!renderer.init())
@@ -45,8 +79,8 @@ int main(int argc, char** argv)
         return 1;
     }
     renderer.set_light_dir(Vec3(0.4f, -0.8f, 0.3f));
-    renderer.set_sky_enabled(true);
-    renderer.enable_shadows(2, 1024, 200.f);
+    //renderer.set_sky_enabled(false);
+    //renderer.enable_shadows(2, 1024, 200.f);
     if (getenv("COREGL_STATS")) renderer.set_show_stats(true);
     if (getenv("COREGL_CASCADES")) renderer.set_show_cascades(true);
 
@@ -56,8 +90,7 @@ int main(int argc, char** argv)
     // ---- filesystem: register asset paths so textures resolve automatically ---
     fs::getFilesystem().addFolder("assets/bsp/oa_rpg3dm2");
     fs::getFilesystem().addFolder("assets/bsp/map-20kdm2");
-    fs::getFilesystem().addFolder("/media/projectos/assets/terror");
-    
+    fs::getFilesystem().addFolder("/media/projectos/assets/quake");
 
     // ---- scene graph node (created first so its collision data can be
     // filled in the SAME load_bsp_mesh call below — one file read total,
@@ -67,32 +100,16 @@ int main(int argc, char** argv)
     // ---- load BSP map -------------------------------------------------------
     auto t0 = std::chrono::steady_clock::now();
     std::vector<Material*> materials;
-    // textureDir is the map root — BSP texture names like
-    // "textures/base_floor/clang" are cleaned and joined: root + "textures/..." + ext
-    
-    // Mesh* bspMesh = assets.load_bsp_mesh("bsp_map",
-    //                                       "assets/bsp/oa_rpg3dm2/oa_rpg3dm2.bsp",
-    //                                       materials,
-    //                                       "assets/bsp/oa_rpg3dm2/", mapInst);
-//  Mesh* bspMesh = assets.load_bsp_mesh("bsp_map",
-//                                           "assets/bsp/map-20kdm2/20kdm2.bsp",
-//                                           materials,
-//                                           "assets/bsp/map-20kdm2/",
-//                                           mapInst);
 
-    // textureDir empty: BSP texture names already come as "textures/..."
-    // relative to the mod root, and that root is registered via addFolder
-    // above — fs::getFilesystem() searches it automatically, no need to
-    // hardcode an absolute, machine-specific path here.
+    std::unordered_map<int, Mesh*> modelMeshes;
     Mesh* bspMesh = assets.load_bsp_mesh("bsp_map",
-                                          "maps/ut4_inferno_b3.bsp",
+                                          "maps/q3ctf2.bsp",
                                           materials,
                                           "",
-                                          mapInst);
+                                          mapInst,
+                                          &modelMeshes);
 
-
-    
-                                         auto t1 = std::chrono::steady_clock::now();
+    auto t1 = std::chrono::steady_clock::now();
 
     if (!bspMesh)
     {
@@ -107,16 +124,33 @@ int main(int argc, char** argv)
            bspMesh->index_count(), (unsigned)materials.size(),
            (unsigned)mapInst->entities().size(), loadMs);
 
- 
-
     mapInst->set_mesh(bspMesh);
     mapInst->set_materials(materials);
-    // Q3 maps are in game units (~32 units = 1m); scale down for a
-    // reasonable camera speed. Adjust this to taste for each map.
     mapInst->set_scale(0.03125f); // 1/32
-    mapInst->remove_entities("target_speaker");
-    mapInst->remove_entities("info_ut_spawn");
-    mapInst->remove_entities("info_null");
+    mapInst->remove_entities_except("func_door");
+
+
+    CollisionSystem worldCollision;
+    Octree* worldOctree = nullptr;
+    buildWorldCollision(bspMesh, worldCollision, worldOctree);
+    // Irrlicht's own default is 0.0005 (ellipsoid-space) — but that's
+    // ~0.008 world units of buffer against a wall at THIS map's scale
+    // (thousands of units), inside float precision noise. The player reads
+    // as permanently embedded within that margin, re-finds the same wall
+    // triangle at t=~0 every frame, and the tangential slide never gets
+    // real distance — "glued to the wall". 0.05 (~0.8 world units) is
+    // still a thin buffer but well clear of float noise at this scale.
+    // Only affects THIS CollisionSystem instance (see setSlidingSpeed's
+    // comment).
+    worldCollision.setSlidingSpeed(0.05f);
+
+
+    const float mapScale = 0.03125f;
+    //Vec3 spawnPos = Vec3(9.81f, 1.56f, 0.60f) / mapScale - Vec3(0.f, 29.f, 0.f); // player center = worldTarget/scale
+
+    Vec3 spawnPos = Vec3(34.57f, 3.0f, -4.19f) / mapScale - Vec3(0.f, 29.f, 0.f);
+
+    // note: ignoring mapInst->find_spawn_point() for this demo to start at a known place
 
     // headlamp: point light following the camera for dark corners
     PointLight* headlamp = scene.root().create_child<PointLight>("headlamp");
@@ -127,47 +161,66 @@ int main(int argc, char** argv)
 
     Camera3D* camera = scene.root().create_child<Camera3D>("fly");
     camera->set_perspective(60.f, 0.1f, 500.f);
-    camera->set_position(0.f, 3.f, 0.f);
 
     scene.set_active_camera(camera);
     scene.ready();
 
-    // ---- player: a box swept through the map's own BSP tree (real brush
-    // collision, not noclip) — moveAndSlide runs entirely in raw map-unit
-    // space; only the camera's final position gets converted to world
-    // space via mapInst's transform (see mapXform below). Half-extent is
-    // Quake 3's own standing player bbox (mins/maxs (-16,-16,-24)/(16,16,32)
-    // ~= 56 units tall), used symmetric around playerPos here for
-    // simplicity, so playerPos tracks the box CENTER, not the feet. ------
-    const Vec3 playerHalfExtent(16.f, 28.f, 16.f);
-    const float playerGravity = 800.f;   // Quake units/s^2
-    const float playerJumpSpeed = 270.f; // Quake units/s
+    // ---- func_door movers: one BspDoor child per door entity, driven by
+    // proximity to the camera (see BspDoor::set_activator — reads the
+    // node's position itself every frame, nothing to push by hand here).
+    // Visual only for now: the mesh collider built above doesn't know
+    // about brush models, so a closed door still doesn't physically block
+    // the player yet — that needs the collider to also sweep against
+    // model_index()/offset() per door, a separate step.
+    std::vector<BspDoor*> doors;
+    for (const BspInstance::Entity& e : mapInst->entities())
+    {
+        if (e.classname != "func_door") continue;
+        int mi = mapInst->model_index_from_entity(e);
+        if (mi < 0) continue;
+
+        auto it = modelMeshes.find(mi);
+        Mesh* visualMesh = (it != modelMeshes.end()) ? it->second : nullptr;
+
+        BspDoor* door = mapInst->create_child<BspDoor>("func_door_" + std::to_string(mi));
+        door->init(mapInst, e, mi, visualMesh);
+        door->setup();
+        door->set_activator(camera);
+        doors.push_back(door);
+    }
+    BspDoor::link_teams(doors); // paired/grouped leaves (shared "team" key) open together
+    printf("doors: %zu\n", doors.size());
+
+    // ---- player: exact radius/gravity Irrlicht's own 20kdm2 collision
+    // demo uses on this same map — smgr->createCollisionResponseAnimator(
+    // selector, camera, vector3df(30,50,30), vector3df(0,-10,0), ...) —
+    // not Quake's real bbox/gravity (16,28,16 / 800). Their gravity is 80x
+    // gentler; that's very likely the actual reason their ellipsoid rides
+    // stairs and ours didn't; playerPos tracks the box CENTER, not the
+    // feet. ------
+    const Vec3 playerHalfExtent(20.f, 30.f, 20.f);
+    const float playerGravity = 800.f;
+    const float playerJumpSpeed = 350.f;
     const float playerWalkSpeed = 320.f; // Quake units/s (default sv_speed)
-    Vec3 spawnPos;
-    if (!mapInst->find_spawn_point(spawnPos)) spawnPos = Vec3(0.f, 64.f, 0.f);
-    // Quake spawn "origin" is at the player's FEET; playerPos tracks the box
-    // CENTER, so lift it by exactly one half-extent — anything more pushes
-    // the box into the ceiling headroom was sized for (a real bug this demo
-    // hit: a "+8 extra buffer" here left the player permanently stuck in
-    // solid geometry from frame 0, moveAndSlide's fraction=0 every frame).
-    Vec3 playerPos = spawnPos + Vec3(0.f, playerHalfExtent.y, 0.f);
+
+    Vec3 playerPos = spawnPos + Vec3(0.f, playerHalfExtent.y + 1.f, 0.f);
     float playerVelY = 0.f;
     bool onGround = false;
-    // tryStepUp snaps playerPos.y instantly when it climbs a stair riser —
-    // fine for collision, but a camera that jumps by a whole step height in
-    // one frame reads as jitter/shake. Track a SEPARATE smoothed eye height
-    // that chases playerPos.y at a bounded rate instead of copying it
-    // directly, same idea as Source's view-punch/step smoothing — only Y is
-    // smoothed, X/Z stay direct so turning/strafing never feels laggy.
+
+
     float smoothEyeY = playerPos.y;
     camera->set_position(mapInst->get_world_matrix() * playerPos);
+
+    Vec3 velocity(0.f, 0.f, 0.f);
 
     FlyCam fly; // mouse-look only here — WASD below drives playerPos through moveAndSlide instead of fly.apply()'s noclip
     gl::u64 lastTicks = SDL_GetPerformanceCounter();
     const gl::u64 freq = SDL_GetPerformanceFrequency();
     float timeOfDay = getenv("COREGL_TOD") ? (float)atof(getenv("COREGL_TOD")) : 0.9f;
+    float appTime = 0.f;
     bool showEntityGizmos = false; // B toggles — see BspInstance::entities()
-    bool showPick = true; // V toggles — see BspInstance::raycast()
+    bool showPick = false; // V toggles — see BspInstance::raycast()
+    bool noclip = true; // F toggles — free-fly through walls, no collision
 
     int frame = 0;
     bool running = true;
@@ -189,18 +242,13 @@ int main(int argc, char** argv)
                     renderer.set_shadows_active(on);
                     printf("shadows: %s\n", on ? "ON" : "off");
                 }
-                if (ev.key.keysym.sym == SDLK_c)
-                {
-                    static bool on = false;
-                    on = !on;
-                    renderer.set_show_cascades(on);
-                    printf("cascade debug colors: %s\n", on ? "ON" : "off");
-                }
+
                 if (ev.key.keysym.sym == SDLK_p)
                 {
                     Vec3 p = camera->get_position();
-                    printf("camera pos (%.2f, %.2f, %.2f) yaw=%.3f pitch=%.3f\n",
-                           p.x, p.y, p.z, fly.yaw, fly.pitch);
+                    Vec3 mapScale = mapInst->get_scale();
+                    printf("camera pos (%.2f, %.2f, %.2f) mapScale=(%.3f,%.3f,%.3f) yaw=%.3f pitch=%.3f\n",
+                           p.x, p.y, p.z, mapScale.x, mapScale.y, mapScale.z, fly.yaw, fly.pitch);
                 }
                 if (ev.key.keysym.sym == SDLK_F10)
                 {
@@ -218,11 +266,23 @@ int main(int argc, char** argv)
                     showPick = !showPick;
                     printf("crosshair pick: %s\n", showPick ? "ON" : "off");
                 }
-                if (ev.key.keysym.sym == SDLK_SPACE && onGround)
+                if (ev.key.keysym.sym == SDLK_f)
+                {
+                    noclip = !noclip;
+                    if (noclip)
+                    {
+                        velocity = Vec3(0.f, 0.f, 0.f);
+                        playerVelY = 0.f;
+                    }
+                    printf("noclip: %s\n", noclip ? "ON" : "off");
+                }
+                if (ev.key.keysym.sym == SDLK_SPACE && onGround && !noclip)
                 {
                     playerVelY = playerJumpSpeed;
+                    velocity.y = playerJumpSpeed;
                     onGround = false;
                 }
+
             }
             fly.handle(ev);
         }
@@ -232,6 +292,8 @@ int main(int argc, char** argv)
         float dt = (float)((double)(now - lastTicks) / (double)freq);
         lastTicks = now;
         if (dt > 0.1f) dt = 0.1f;
+        appTime += dt;
+        update_material_animations(mapInst->get_materials(), appTime);
 
         // time-of-day: T/G move the sun
         const Uint8* keys = SDL_GetKeyboardState(nullptr);
@@ -239,38 +301,67 @@ int main(int argc, char** argv)
         if (keys[SDL_SCANCODE_G]) timeOfDay -= dt * 0.4f;
         Vec3 sunDir = Vec3(cosf(timeOfDay) * 0.8f, sinf(timeOfDay), 0.35f).normalized();
         renderer.set_light_dir(sunDir * -1.f);
-
-        // look only (fly.apply() would also noclip-move the camera —
-        // WASD below drives playerPos through moveAndSlide instead)
         camera->set_euler(Vec3(fly.pitch, fly.yaw, 0.f));
 
-        // ---- ground-relative WASD (camera forward/right flattened to the
-        // XZ plane, like any FPS — straight camera->advance() would let
-        // looking down make you walk into the floor) ------------------------
-        Vec3 fwd = camera->forward(); fwd.y = 0.f;
-        if (fwd.length_squared() > 1e-8f) fwd = fwd.normalized();
-        Vec3 rgt = camera->right(); rgt.y = 0.f;
-        if (rgt.length_squared() > 1e-8f) rgt = rgt.normalized();
+        if (noclip)
+        {
+            // ---- noclip: full 3D fly through walls — use the camera's
+            // true forward/right (NOT flattened to XZ), move playerPos
+            // directly with no collision/gravity. Q/E go up/down. ----
+            Vec3 fwd = camera->forward();
+            Vec3 rgt = camera->right();
 
-        Vec3 wishDir(0.f, 0.f, 0.f);
-        if (keys[SDL_SCANCODE_W]) wishDir += fwd;
-        if (keys[SDL_SCANCODE_S]) wishDir -= fwd;
-        if (keys[SDL_SCANCODE_D]) wishDir += rgt;
-        if (keys[SDL_SCANCODE_A]) wishDir -= rgt;
-        if (wishDir.length_squared() > 1e-8f) wishDir = wishDir.normalized();
+            Vec3 wishDir(0.f, 0.f, 0.f);
+            if (keys[SDL_SCANCODE_W]) wishDir += fwd;
+            if (keys[SDL_SCANCODE_S]) wishDir -= fwd;
+            if (keys[SDL_SCANCODE_D]) wishDir += rgt;
+            if (keys[SDL_SCANCODE_A]) wishDir -= rgt;
+            if (keys[SDL_SCANCODE_E]) wishDir.y += 1.f;
+            if (keys[SDL_SCANCODE_Q]) wishDir.y -= 1.f;
+            if (wishDir.length_squared() > 1e-8f) wishDir = wishDir.normalized();
 
-        float speed = keys[SDL_SCANCODE_LSHIFT] ? playerWalkSpeed * 1.8f : playerWalkSpeed;
+            float speed = keys[SDL_SCANCODE_LSHIFT] ? playerWalkSpeed * 3.0f : playerWalkSpeed;
+            playerPos += wishDir * speed * dt;
 
-        // gravity: plain position integration, game-side — moveAndSlide
-        // never sees playerVelY itself, only the resulting target position
-        // (same convention as demos/world_test/main.cpp)
-        playerVelY -= playerGravity * dt;
-        if (playerVelY < -800.f) playerVelY = -800.f; // terminal velocity
+            // no collision, no gravity — keep eye on playerPos directly
+            smoothEyeY = playerPos.y;
+            onGround = false;
+            playerVelY = 0.f;
+            velocity = Vec3(0.f, 0.f, 0.f);
+        }
+        else
+        {
+            // ---- ground-relative WASD (camera forward/right flattened to the
+            // XZ plane, like any FPS — straight camera->advance() would let
+            // looking down make you walk into the floor) ------------------------
+            Vec3 fwd = camera->forward(); fwd.y = 0.f;
+            if (fwd.length_squared() > 1e-8f) fwd = fwd.normalized();
+            Vec3 rgt = camera->right(); rgt.y = 0.f;
+            if (rgt.length_squared() > 1e-8f) rgt = rgt.normalized();
 
-        Vec3 target = playerPos + wishDir * (speed * dt) + Vec3(0.f, playerVelY * dt, 0.f);
-        playerPos = mapInst->moveAndSlide(playerPos, target, playerHalfExtent,
-                                          BspCollisionResponse::SlideXZ, &onGround);
-        if (onGround && playerVelY < 0.f) playerVelY = 0.f; // landed — stop accumulating fall speed
+            Vec3 wishDir(0.f, 0.f, 0.f);
+            if (keys[SDL_SCANCODE_W]) wishDir += fwd;
+            if (keys[SDL_SCANCODE_S]) wishDir -= fwd;
+            if (keys[SDL_SCANCODE_D]) wishDir += rgt;
+            if (keys[SDL_SCANCODE_A]) wishDir -= rgt;
+            if (wishDir.length_squared() > 1e-8f) wishDir = wishDir.normalized();
+
+            float speed = keys[SDL_SCANCODE_LSHIFT] ? playerWalkSpeed * 1.8f : playerWalkSpeed;
+
+            velocity.x = wishDir.x * speed;
+            velocity.z = wishDir.z * speed;
+ 
+            velocity.y -= playerGravity * dt;
+            if (velocity.y < -400.f) velocity.y = -400.f;
+
+            Vec3 horizDisp(velocity.x * dt, 0.f, velocity.z * dt);
+            Vec3 gravDisp(0.f, velocity.y * dt, 0.f);
+            playerPos = worldCollision.collideAndSlide(playerPos, horizDisp, playerHalfExtent,
+                                                       gravDisp, onGround);
+            if (onGround && velocity.y < 0.f) velocity.y = 0.f;
+            playerVelY = velocity.y; // keep both in sync so N can toggle back and forth cleanly
+        }
+
 
         // Smooth the eye height toward playerPos.y instead of copying it
         // directly: a stair-step snap (tryStepUp, up to 24 units in one
@@ -286,11 +377,11 @@ int main(int argc, char** argv)
             else
                 smoothEyeY += dyStep * std::min(1.f, 15.f * dt);
         }
-        Vec3 eyePos(playerPos.x, smoothEyeY + 22.f, playerPos.z);
+        Vec3 eyePos(playerPos.x, smoothEyeY + 2.f, playerPos.z);
 
         camera->set_position(mapInst->get_world_matrix() * eyePos);
         headlamp->set_position(camera->get_position());
-        headlamp->set_position(camera->get_position());
+
 
         scene.update(dt);
 
@@ -395,6 +486,8 @@ int main(int argc, char** argv)
     // materials are owned by the Mesh (load_bsp_mesh calls
     // set_owned_materials) — freed by assets.release() below, `materials`
     // is only a view here; deleting them ourselves double-frees.
+
+    delete worldOctree;
 
     scene.release_gpu();
     assets.release(); // frees the BSP mesh + textures

@@ -120,6 +120,31 @@ public:
     // (texel-snapped). `distance` caps how far shadows reach — smaller
     // means sharper shadows for the same resolution.
     bool enable_shadows(int cascades = 4, int resolution = 2048, float distance = 200.f);
+    // world-space normal-offset push used to dodge shadow acne before
+    // sampling the CSM (see u_shadowNormalBias in SceneShaders.hpp) — the
+    // default (0.05) assumes vehicle/building-scale objects (tens of world
+    // units); a human-scale scene (a character ~1 world unit tall) needs a
+    // proportionally smaller value or the fixed push reads as detached/
+    // "peter-panning" shadows at floor and wall contacts.
+    void set_shadow_normal_bias(float b) { m_shadowNormalBias = b; }
+    // glPolygonOffset used during the CSM depth pass. Larger values fight
+    // shadow acne on sloped surfaces but can pull the occluder depth far
+    // enough from the light to create light leaks at wall/floor contacts.
+    // Scenes with small world units (human-scale) usually need smaller
+    // values than the engine default (2.5, 4).
+    void set_shadow_polygon_offset(float factor, float units)
+    {
+        m_shadowPolygonOffsetFactor = factor;
+        m_shadowPolygonOffsetUnits = units;
+    }
+    // debug (see u_debugShadowClip in SceneShaders.hpp): 0 off, 1 tints a
+    // fragment magenta wherever its shadow-space projection falls outside
+    // the active cascade's own light-space box (bias/offset tuning can't
+    // fix that — the point isn't tested against the shadow map at all
+    // there), 2 shows the raw computed occlusion value as grayscale
+    // everywhere, bypassing lighting entirely (is the shadow test itself
+    // wrong at a suspect line, or is the line introduced later?).
+    void set_debug_shadow_clip(int mode) { m_debugShadowClip = mode; }
     void set_show_cascades(bool on) { m_show_cascades = on; } // debug tint
     // debug: fully disable/re-enable shadow sampling in the forward shader
     // without tearing down the shadow map (toggle at runtime, no realloc)
@@ -138,6 +163,17 @@ public:
     // is a common reason a mesh silently never draws — the box would show
     // up as a single point or nothing at all, an immediate tell).
     void set_show_mesh_bounds(bool on) { m_show_mesh_bounds = on; }
+    // debug: wireframe box around ONE surface of `inst`'s mesh —
+    // surfaceIndex is the same index Mesh::dump_surfaces() prints, so
+    // "which one is the floor" is: read the index off dump_surfaces()'s
+    // bounds, pass it here, see the box land on the floor. No material/
+    // shader touched, just line geometry drawn each frame; surfaceIndex < 0
+    // disables.
+    void set_debug_surface_index(MeshInstance* inst, int surfaceIndex)
+    {
+        m_debugSurfaceInst = inst;
+        m_debugSurfaceIndex = surfaceIndex;
+    }
     // debug: glPolygonMode(GL_LINE) over the main opaque pass — draws the
     // real triangle edges of whatever's bound, no extra geometry needed.
     // Desktop GL only (see gl::Renderer::SetWireframe).
@@ -221,6 +257,7 @@ private:
     void draw_octree_debug(const Mat4& viewProj);
     static void collect_octree_bounds(const SceneOctreeNode* node, std::vector<const SceneOctreeNode*>& out);
     void draw_mesh_bounds_debug(Node& root, const Mat4& viewProj);
+    void draw_debug_surface_index(const Mat4& viewProj);
     static void collect_mesh_instances(Node* node, std::vector<MeshInstance*>& out);
     // one rendering of the scene into one target
     struct RenderView
@@ -288,6 +325,8 @@ private:
     gl::i32 m_locCascadeCount = -1;
     gl::i32 m_locShowCascades = -1;
     gl::i32 m_locShadowSize = -1;
+    gl::i32 m_locShadowNormalBias = -1;
+    gl::i32 m_locDebugShadowClip = -1;
 
     // BSP lightmapped pass (uv2, no tangents, no shadows)
     gl::Shader m_bsp;
@@ -308,6 +347,10 @@ private:
     int m_cascades = 0; // 0 = shadows disabled
     int m_shadowSize = 0;
     float m_shadow_distance = 200.f;
+    float m_shadowNormalBias = 0.05f;
+    float m_shadowPolygonOffsetFactor = 2.5f;
+    float m_shadowPolygonOffsetUnits = 4.f;
+    int m_debugShadowClip = 0;
     float m_splits[5] = {};
     Mat4 m_cascadeMat[4];
     bool m_show_cascades = false;
@@ -393,6 +436,10 @@ private:
 
     // BSP lightmapped instances (collected separately, own shader)
     std::vector<class BspInstance*> m_bspInstances;
+    // BSP brush-entity movers (func_door, ...) — same mesh format/shader as
+    // BspInstance itself (uv2 lightmap, no tangents), just drawn with their
+    // own per-instance world matrix instead of the map's static one.
+    std::vector<class BspEntityInstance*> m_bspEntityInstances;
 
     // sky passes: procedural gradient, cubemap skybox, equirect skydome
     gl::Shader m_sky;
@@ -476,7 +523,14 @@ private:
     bool m_ocean_ready = false;
 
     gl::Texture m_white;    // 1x1 fallback so u_diffuse always samples something
-    gl::Texture m_gray;     // 1x1 neutral detail map
+    gl::Texture m_gray;     // 1x1 neutral detail map (forward shader's convention)
+    // BSP shader's own lightmap convention is `albedo * lm * 6.0` (kBSP_FS)
+    // — a different multiply than the forward shader's, so m_gray's 0.5
+    // isn't neutral here (would still blow out 3x). Surfaces with no real
+    // lightmap (lm_index==-1: sky, lava, any fullbright/unlit shader) need
+    // ~1/6 instead, so albedo*1/6*6.0 == albedo — the true, unlit color,
+    // not a bloom-white wash.
+    gl::Texture m_bspNeutralLM;
     std::vector<class LensFlareNode*> m_lensflares; // reused across frames
 
     // terrain shader (texture splatting)
@@ -504,6 +558,8 @@ private:
     bool m_show_light_gizmos = false;
     bool m_show_octree_debug = false;
     bool m_show_mesh_bounds = false;
+    MeshInstance* m_debugSurfaceInst = nullptr;
+    int m_debugSurfaceIndex = -1;
     bool m_wireframe = false;
     bool m_show_stats = false;
     gl::u64 m_lastFrameNs = 0; // render()-to-render() clock for the fps line

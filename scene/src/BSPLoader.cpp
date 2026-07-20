@@ -7,15 +7,19 @@
 #include "scene/Material.hpp"
 #include "scene/AssetManager.hpp"
 #include "scene/BspInstance.hpp"
+#include "scene/MeshInstance.hpp"
 #include "scene/Math.hpp"
 #include "scene/Filesystem.hpp"
+#include "scene/IO.hpp"
 #include "coregl/gl_log.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -40,6 +44,12 @@ constexpr int kLumpBrushes = 8;
 constexpr int kLumpBrushSides = 9;
 constexpr int kLumpFaces = 13;
 
+// Set by clipBoxToBrush whenever it registers a hit — lets debug logging
+// (BSP_DEBUG_STAIRS) report which CONTENTS_* flags actually blocked a trace
+// (real Solid geometry vs. an invisible PlayerClip volume) without changing
+// BspTraceResult's public shape for a diagnostic-only need.
+int g_lastHitContents = 0;
+
 constexpr int kFacePolygon = 1;
 constexpr int kFacePatch = 2;
 constexpr int kFaceMesh = 3;
@@ -55,16 +65,15 @@ constexpr int kBrushSize = 12;   // int firstSide + int numSides + int textureId
 constexpr int kBrushSideSize = 8; // int planeIdx + int textureIdx
 constexpr int kModelSize = 40;   // vec3 mins + vec3 maxs + int firstFace + int numFaces + int firstBrush + int numBrushes
 
-constexpr int kContentsSolid = 1;       // CONTENTS_SOLID
-constexpr int kContentsPlayerClip = 0x10000; // CONTENTS_PLAYERCLIP — invisible,
-// player-only collision brushes mappers lay over jagged stairs/ramp geometry
-// so the PLAYER slides on a smooth clip hull instead of the visible steps.
-// We only ever collide the player (no weapons/monsters here), so this is
-// exactly as "solid" as CONTENTS_SOLID for our purposes. Missing this was a
-// real bug: on bigger, properly-compiled Quake3 maps (Urban Terror's) that
-// actually use clip brushes, the player caught on the raw visible stair
-// edges underneath instead of the intended smooth ramp — small ledges and
-// stairs "getting stuck" was this, not a math bug in the trace itself.
+// Brush CONTENTS_* handling lives in BspContents:: now (BspInstance.hpp) —
+// worldCollision() takes a caller-chosen mask at trace time instead of this
+// file baking one fixed "is this solid" bool in at load time. Including
+// CONTENTS_PLAYERCLIP in the default mask was a real bug fix: on bigger,
+// properly-compiled Quake3 maps (Urban Terror's) mappers lay invisible
+// player-only clip brushes over jagged stairs/ramp geometry so the player
+// slides on a smooth clip hull instead of the visible steps — missing that
+// bit meant catching on the raw stair edges underneath, not a math bug in
+// the trace itself.
 constexpr float kContactEps = 0.03125f; // Quake's own DIST_EPSILON convention (1/32 unit)
 
 constexpr float kEps = 1e-6f;
@@ -151,7 +160,8 @@ MeshVertex makeVertex(const BspVertex& bv)
     Vec3 n = bv.normal;
     float lenSq = Vec3::Dot(n, n);
     mv.normal = (lenSq > kEps) ? n.normalized() : Vec3(0.f, 1.f, 0.f);
-    mv.uv = bv.uv;
+    mv.uv.x =1.f -bv.uv.x;
+    mv.uv.y = bv.uv.y; // Quake3 UVs are upside-down in OpenGL
     mv.tangent = Vec4(1.f, 0.f, 0.f, 1.f);
     return mv;
 }
@@ -216,9 +226,268 @@ static BspVertex evalPatch(const BspVertex cp[9], float u, float v)
     return o;
 }
 
-// Try loading a texture from `textureDir` + `name` with several extensions.
-// Q3 BSP texture names are like "textures/base_floor/clanggrate"; we join
-// directly with textureDir (the map root, e.g. "assets/bsp/oa_rpg3dm2/").
+// Per-shader info pulled out of scripts/*.shader — see shaderInfoMap().
+struct ShaderInfo
+{
+    std::string image; // first real "map" stage, else qer_editorimage, else animFrames[0]
+    bool sky = false;    // surfaceparm sky — rendered by SceneRenderer's own
+                          // skybox/skydome/procedural pass, never as geometry
+    bool fog = false;    // surfaceparm fog — a volumetric density marker
+                          // (nonsolid, usually tcmod-scrolled), never a real
+                          // textured wall/floor; we don't have a volumetric
+                          // fog pass, so skip it rather than draw it flat
+    bool trans = false;  // surfaceparm trans, or a non-opaque blendFunc stage
+    bool additive = false; // blendFunc GL_ONE GL_ONE (flames/glows) vs alpha
+    std::vector<std::string> animFrames; // "animMap <fps> f1 f2 ..." — first stage found
+    float animFps = 0.f;
+};
+
+static std::string upper(const std::string& s)
+{
+    std::string r = s;
+    for (char& c : r) c = (char)std::toupper((unsigned char)c);
+    return r;
+}
+
+// Quake3 BSP texture names are often SHADER names (scripts/*.shader), not
+// literal image files — e.g. "textures/gothic_trim/pitted_rust3_trans" has
+// no such .tga on disk, but its shader script says:
+//   textures/gothic_trim/pitted_rust3_trans
+//   {
+//       qer_editorimage textures/gothic_trim/pitted_rust3.tga
+//       { map $lightmap ... }
+//       { map textures/gothic_trim/pitted_rust3.tga ... }
+//   }
+// This scans every registered Filesystem folder's "scripts" subdirectory
+// once (lazily, cached) and maps shaderName -> the first real image it
+// finds (a stage's "map", skipping $lightmap/$whiteimage/other $specials;
+// else the "qer_editorimage" line as a fallback) plus the sky/trans/blend
+// flags callers need to decide how to draw the surface at all.
+const std::unordered_map<std::string, ShaderInfo>& shaderInfoMap()
+{
+    static std::unordered_map<std::string, ShaderInfo> map;
+    static bool built = false;
+    if (built) return map;
+    built = true;
+
+    auto isWs = [](char c) { return std::isspace((unsigned char)c) != 0; };
+
+    for (gl::u32 i = 0; i < fs::getFilesystem().pathCount(); ++i)
+    {
+        const fs::PathEntry* entry = fs::getFilesystem().getPath(i);
+        if (!entry || entry->type != fs::PathEntry::FOLDER) continue;
+
+        std::string scriptsDir = std::string(entry->path) + "/scripts";
+        DIR* dir = opendir(scriptsDir.c_str());
+        if (!dir) continue;
+
+        struct dirent* de;
+        while ((de = readdir(dir)) != nullptr)
+        {
+            std::string fname = de->d_name;
+            if (fname.size() < 8 || fname.compare(fname.size() - 7, 7, ".shader") != 0) continue;
+
+            // Read THIS folder's copy directly by its full path via the
+            // engine's own cross-platform io::FileInterface — NOT
+            // Filesystem::readText("scripts/" + fname), which re-searches
+            // every registered folder by that logical name and always
+            // returns whichever one is registered first. Several maps ship
+            // same-named shader files (e.g. every map's own "sfx.shader"
+            // alongside the shared quake/scripts/sfx.shader) with different
+            // contents, so that always silently shadowed every folder
+            // after the first — some shaders (flame1dark) only existed in
+            // the copy that never got read.
+            io::FileInterface* iface = io::getFileInterface();
+            if (!iface) continue;
+            std::string fullPath = scriptsDir + "/" + fname;
+            io::FileHandle* handle = iface->open(fullPath.c_str());
+            if (!handle) continue;
+            gl::i64 sz = iface->size(handle);
+            std::string text;
+            if (sz > 0)
+            {
+                text.resize((size_t)sz);
+                iface->seek(handle, 0, io::SeekMode::Begin);
+                iface->read(handle, &text[0], (gl::u64)sz);
+            }
+            iface->close(handle);
+
+            size_t pos = 0, len = text.size();
+            while (pos < len)
+            {
+                while (pos < len && isWs(text[pos])) ++pos;
+                if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '/')
+                {
+                    while (pos < len && text[pos] != '\n') ++pos;
+                    continue;
+                }
+                if (pos >= len) break;
+                if (text[pos] == '{' || text[pos] == '}') { ++pos; continue; }
+
+                size_t start = pos;
+                while (pos < len && !isWs(text[pos]) && text[pos] != '{') ++pos;
+                std::string token = text.substr(start, pos - start);
+                if (token.empty()) continue;
+
+                // Real .shader files often put a comment banner between the
+                // shader name and its opening '{' (e.g. sfx.shader's
+                // q3dm14fog) — skip those too, not just whitespace, or the
+                // '{' reads as a stray brace and the whole block silently
+                // stops being associated with this shader name.
+                size_t p2 = pos;
+                while (true)
+                {
+                    while (p2 < len && isWs(text[p2])) ++p2;
+                    if (p2 + 1 < len && text[p2] == '/' && text[p2 + 1] == '/')
+                    {
+                        while (p2 < len && text[p2] != '\n') ++p2;
+                        continue;
+                    }
+                    break;
+                }
+                if (p2 >= len || text[p2] != '{') continue; // not a "name {" header
+                pos = p2 + 1;
+
+                const std::string& shaderName = token;
+                std::string firstMap, editorImage;
+                bool sky = false, fog = false, trans = false, additive = false;
+                std::vector<std::string> animFrames;
+                float animFps = 0.f;
+                int depth = 1;
+                int stageCount = 0;
+                bool inFirstStage = false;
+                while (pos < len && depth > 0)
+                {
+                    if (text[pos] == '{')
+                    {
+                        ++depth;
+                        if (depth == 2) { ++stageCount; inFirstStage = (stageCount == 1); }
+                        ++pos; continue;
+                    }
+                    if (text[pos] == '}')
+                    {
+                        if (depth == 2) inFirstStage = false;
+                        --depth; ++pos; continue;
+                    }
+                    if (pos + 1 < len && text[pos] == '/' && text[pos + 1] == '/')
+                    {
+                        while (pos < len && text[pos] != '\n') ++pos;
+                        continue;
+                    }
+                    if (isWs(text[pos])) { ++pos; continue; }
+
+                    size_t ts = pos;
+                    while (pos < len && !isWs(text[pos]) && text[pos] != '{' && text[pos] != '}') ++pos;
+                    std::string kw = text.substr(ts, pos - ts);
+
+                    if (kw == "qer_editorimage" || kw == "map")
+                    {
+                        while (pos < len && isWs(text[pos])) ++pos;
+                        size_t vs = pos;
+                        while (pos < len && !isWs(text[pos])) ++pos;
+                        std::string val = text.substr(vs, pos - vs);
+                        if (kw == "qer_editorimage") editorImage = val;
+                        else if (firstMap.empty() && !val.empty() && val[0] != '$')
+                            firstMap = val;
+                    }
+                    else if (kw == "surfaceparm")
+                    {
+                        while (pos < len && isWs(text[pos])) ++pos;
+                        size_t vs = pos;
+                        while (pos < len && !isWs(text[pos])) ++pos;
+                        std::string val = upper(text.substr(vs, pos - vs));
+                        if (val == "SKY") sky = true;
+                        else if (val == "FOG") fog = true;
+                        else if (val == "TRANS") trans = true;
+                    }
+                    else if (kw == "animMap")
+                    {
+                        // "animMap <fps> frame1.tga frame2.tga ..." — the
+                        // torch/conduit/flame family (no static "map" stage
+                        // at all, just a frame sequence). First animMap
+                        // stage found wins, same "first one, not every one"
+                        // convention as firstMap above — flame shaders
+                        // layer TWO offset-by-one animMap stages for a
+                        // flicker effect; one real cycling texture beats
+                        // freezing on whichever qer_editorimage frame.
+                        while (pos < len && isWs(text[pos]) && text[pos] != '\n') ++pos;
+                        size_t vs = pos;
+                        while (pos < len && !isWs(text[pos])) ++pos;
+                        float fps = (float)std::atof(text.substr(vs, pos - vs).c_str());
+
+                        std::vector<std::string> frames;
+                        while (true)
+                        {
+                            while (pos < len && isWs(text[pos]) && text[pos] != '\n') ++pos;
+                            if (pos >= len || text[pos] == '\n' || text[pos] == '{' || text[pos] == '}')
+                                break;
+                            size_t fs = pos;
+                            while (pos < len && !isWs(text[pos])) ++pos;
+                            frames.push_back(text.substr(fs, pos - fs));
+                        }
+                        if (animFrames.empty() && !frames.empty())
+                        {
+                            animFrames = frames;
+                            animFps = fps;
+                        }
+                    }
+                    else if (kw == "blendFunc")
+                    {
+
+                        while (pos < len && isWs(text[pos])) ++pos;
+                        size_t vs = pos;
+                        while (pos < len && !isWs(text[pos]) && text[pos] != '\n') ++pos;
+                        std::string src = upper(text.substr(vs, pos - vs));
+                        while (pos < len && isWs(text[pos]) && text[pos] != '\n') ++pos;
+                        size_t vd = pos;
+                        while (pos < len && !isWs(text[pos])) ++pos;
+                        std::string dst = upper(text.substr(vd, pos - vd));
+
+                        if (inFirstStage)
+                        {
+       
+                            if (src == "ADD" || (src == "GL_ONE" && dst == "GL_ONE"))
+                            {
+                                trans = true; additive = true;
+                            }
+                            else if (src == "FILTER" ||
+                                    (src == "GL_DST_COLOR" && dst == "GL_ZERO") ||
+                                    (src == "GL_ONE" && dst == "GL_ZERO"))
+                            {
+                                // modulate / opaque replace — not trans
+                            }
+                            else
+                            {
+                                trans = true; // BLEND shorthand or any other GL_* pair
+                            }
+                        }
+                    }
+                }
+
+                std::string chosen = !firstMap.empty() ? firstMap
+                                     : !editorImage.empty() ? editorImage
+                                     : (animFrames.empty() ? std::string() : animFrames[0]);
+                ShaderInfo info;
+                info.image = chosen;
+                info.sky = sky;
+                info.fog = fog;
+                info.trans = trans;
+                info.additive = additive;
+                info.animFrames = animFrames;
+                info.animFps = animFps;
+                map[shaderName] = info;
+            }
+        }
+        closedir(dir);
+    }
+    return map;
+}
+
+// Try loading a texture from `textureDir` + `name` with several extensions,
+// then fall back to resolving `name` as a shader script name (see
+// shaderInfoMap() above) before giving up to the checkerboard. Q3 BSP
+// texture names are like "textures/base_floor/clanggrate"; we join directly
+// with textureDir (the map root, e.g. "assets/bsp/oa_rpg3dm2/").
 // AssetManager never returns null (checkerboard fallback).
 gl::Texture* tryLoadTex(const std::string& textureDir, const std::string& name)
 {
@@ -230,6 +499,35 @@ gl::Texture* tryLoadTex(const std::string& textureDir, const std::string& name)
         if (fs::getFilesystem().exists(fullPath.c_str()))
             return assets::AssetManager::instance().loadTexture(name.c_str(), fullPath.c_str(), true);
     }
+
+    const auto& shaders = shaderInfoMap();
+    auto it = shaders.find(name);
+    if (it != shaders.end())
+    {
+        const std::string& resolved = it->second.image;
+        bool hasExt = resolved.size() > 4 && resolved[resolved.size() - 4] == '.';
+        std::string base = hasExt ? resolved.substr(0, resolved.size() - 4) : resolved;
+
+        // Try the shader's own extension first, but asset packs frequently
+        // ship a different one than the original Quake3 .tga the shader
+        // script names (e.g. this map's pitted_rust3.tga only exists as
+        // pitted_rust3.jpg on disk) — fall through the same extension list
+        // as the literal-name attempt above instead of taking the shader's
+        // word for it.
+        if (hasExt)
+        {
+            std::string fullPath = textureDir + resolved;
+            if (fs::getFilesystem().exists(fullPath.c_str()))
+                return assets::AssetManager::instance().loadTexture(name.c_str(), fullPath.c_str(), true);
+        }
+        for (const char* e : exts)
+        {
+            std::string fullPath = textureDir + base + e;
+            if (fs::getFilesystem().exists(fullPath.c_str()))
+                return assets::AssetManager::instance().loadTexture(name.c_str(), fullPath.c_str(), true);
+        }
+    }
+
     // Fallback — AssetManager returns checkerboard so the scene keeps rendering.
     return assets::AssetManager::instance().loadTexture(name.c_str(),
                                                         (textureDir + name + ".tga").c_str(),
@@ -268,7 +566,7 @@ std::vector<BspInstance::Entity> parseEntities(const std::string& text)
         }
         auto it = e.keyValues.find("classname");
         e.classname = (it != e.keyValues.end()) ? it->second : "";
-        gl::Log::Info("[BSP] entity: classname='%s' keys=%zu", e.classname.c_str(), e.keyValues.size());
+     //  gl::Log::Info("[BSP] entity: classname='%s' keys=%zu", e.classname.c_str(), e.keyValues.size());
         ents.push_back(std::move(e));
         i = close + 1;
     }
@@ -307,6 +605,18 @@ bool BspInstance::clipBoxToBrush(const BspBrush& brush, const Vec3& origStart, c
     bool startsOut = false;
     bool getsOut = false;
     const BspPlane* clipPlane = nullptr;
+    // Tracks the LEAST-penetrated side (largest d1, closest to 0) while the
+    // box is fully embedded — the natural "push out this way" direction if
+    // every side comes back negative. Without this, the startSolid branch
+    // below had no plane to report and left result.normal at its default
+    // (0,0,0): a degenerate zero-normal "hit" that slideVelocity's crease
+    // resolver accepts for free (dot() with a zero vector is never negative)
+    // and returns the ORIGINAL velocity unclipped — so the trace re-runs
+    // next frame from the exact same embedded start, gets the same
+    // zero-normal non-answer, forever. That's the "player just stops and
+    // never moves again" symptom against doors/tight corners.
+    float bestD1 = -1e30f;
+    const BspPlane* bestPlane = nullptr;
 
     for (int i = 0; i < brush.numSides; ++i)
     {
@@ -320,6 +630,8 @@ bool BspInstance::clipBoxToBrush(const BspBrush& brush, const Vec3& origStart, c
 
         float d1 = Vec3::Dot(plane.normal, origStart) - dist;
         float d2 = Vec3::Dot(plane.normal, origEnd) - dist;
+
+        if (d1 > bestD1) { bestD1 = d1; bestPlane = &plane; }
 
         if (d2 > 0.f) getsOut = true;
         if (d1 > 0.f) startsOut = true;
@@ -354,6 +666,11 @@ bool BspInstance::clipBoxToBrush(const BspBrush& brush, const Vec3& origStart, c
         {
             result.hit = true;
             result.fraction = 0.f;
+            // Report the least-penetrated side as the blocking normal —
+            // gives callers (slideVelocity's unstick step) a real direction
+            // to push out along instead of a degenerate zero vector.
+            result.normal = bestPlane ? bestPlane->normal : Vec3(0.f, 1.f, 0.f);
+            g_lastHitContents = brush.contents;
         }
         return true;
     }
@@ -364,33 +681,34 @@ bool BspInstance::clipBoxToBrush(const BspBrush& brush, const Vec3& origStart, c
         result.fraction = enterFrac;
         result.normal = clipPlane ? clipPlane->normal : Vec3(0.f, 1.f, 0.f);
         result.hit = true;
+        g_lastHitContents = brush.contents;
         return true;
     }
     return false;
 }
 
 void BspInstance::traceLeaf(int leaf, const Vec3& origStart, const Vec3& origEnd,
-                            const Vec3& halfExtent, BspTraceResult& result) const
+                            const Vec3& halfExtent, int contentMask, BspTraceResult& result) const
 {
     const BspLeaf& lf = m_bspLeafs[leaf];
     for (int i = 0; i < lf.numLeafBrushes; ++i)
     {
         int brushIdx = m_bspLeafBrushes[lf.firstLeafBrush + i];
         const BspBrush& brush = m_bspBrushes[brushIdx];
-        if (!brush.solid) continue;
+        if ((brush.contents & contentMask) == 0) continue;
         clipBoxToBrush(brush, origStart, origEnd, halfExtent, result);
     }
 }
 
 void BspInstance::traceNode(int node, float startFrac, float endFrac, const Vec3& start,
                             const Vec3& end, const Vec3& origStart, const Vec3& origEnd,
-                            const Vec3& halfExtent, BspTraceResult& result) const
+                            const Vec3& halfExtent, int contentMask, BspTraceResult& result) const
 {
     if (result.fraction <= startFrac) return; // a closer hit was already found elsewhere
 
     if (node < 0)
     {
-        traceLeaf(~node, origStart, origEnd, halfExtent, result);
+        traceLeaf(~node, origStart, origEnd, halfExtent, contentMask, result);
         return;
     }
 
@@ -406,12 +724,14 @@ void BspInstance::traceNode(int node, float startFrac, float endFrac, const Vec3
 
     if (t1 >= offset && t2 >= offset)
     {
-        traceNode(n.children[0], startFrac, endFrac, start, end, origStart, origEnd, halfExtent, result);
+        traceNode(n.children[0], startFrac, endFrac, start, end, origStart, origEnd, halfExtent,
+                 contentMask, result);
         return;
     }
     if (t1 < -offset && t2 < -offset)
     {
-        traceNode(n.children[1], startFrac, endFrac, start, end, origStart, origEnd, halfExtent, result);
+        traceNode(n.children[1], startFrac, endFrac, start, end, origStart, origEnd, halfExtent,
+                 contentMask, result);
         return;
     }
 
@@ -446,7 +766,8 @@ void BspInstance::traceNode(int node, float startFrac, float endFrac, const Vec3
     // near side: from `start` up to the first crossing point
     float midFrac1 = startFrac + (endFrac - startFrac) * frac1;
     Vec3 mid1 = start + (end - start) * frac1;
-    traceNode(n.children[side], startFrac, midFrac1, start, mid1, origStart, origEnd, halfExtent, result);
+    traceNode(n.children[side], startFrac, midFrac1, start, mid1, origStart, origEnd, halfExtent,
+             contentMask, result);
 
     // far side: from the second crossing point onward to `end` — NOT
     // `start` again (a real bug here: reusing `start` corrupted every
@@ -456,10 +777,22 @@ void BspInstance::traceNode(int node, float startFrac, float endFrac, const Vec3
     // nothing at all).
     float midFrac2 = startFrac + (endFrac - startFrac) * frac2;
     Vec3 mid2 = start + (end - start) * frac2;
-    traceNode(n.children[side ^ 1], midFrac2, endFrac, mid2, end, origStart, origEnd, halfExtent, result);
+    traceNode(n.children[side ^ 1], midFrac2, endFrac, mid2, end, origStart, origEnd, halfExtent,
+             contentMask, result);
 }
 
 BspTraceResult BspInstance::traceBox(const Vec3& start, const Vec3& end, const Vec3& halfExtent) const
+{
+    return worldCollision(start, end, halfExtent, BspContents::DefaultSolid);
+}
+
+// Modeled on Genesis3D's geWorld_Collision (see tmp/Genesis3D11/src/Game/
+// GMain.c) — same shape (box + start/end + a content mask), general query
+// traceBox is itself just a thin wrapper over. Doesn't identify which
+// entity/model was hit yet (only worldspawn's static tree is walked here) —
+// that needs per-entity brush lists, a separate future step for movers.
+BspTraceResult BspInstance::worldCollision(const Vec3& start, const Vec3& end, const Vec3& halfExtent,
+                                           int contentMask) const
 {
     BspTraceResult result;
     result.fraction = 1.f;
@@ -468,7 +801,7 @@ BspTraceResult BspInstance::traceBox(const Vec3& start, const Vec3& end, const V
     {
         return result;
     }
-    traceNode(m_bspRootNode, 0.f, 1.f, start, end, start, end, halfExtent, result);
+    traceNode(m_bspRootNode, 0.f, 1.f, start, end, start, end, halfExtent, contentMask, result);
     result.endPos = start + (end - start) * result.fraction;
     return result;
 }
@@ -484,7 +817,7 @@ Vec3 BspInstance::tryStepUp(const Vec3& start, const Vec3& end, const Vec3& half
     if (outStepped) *outStepped = false;
     if (outGrounded) *outGrounded = false;
 
- 
+
     constexpr float kStepHeight = 24.f;
 
     const Vec3 move = end - start;
@@ -554,6 +887,81 @@ Vec3 BspInstance::tryStepUp(const Vec3& start, const Vec3& end, const Vec3& half
     return traceDown.endPos;
 }
 
+// New, separate step-up — used ONLY by slideVelocity, tryStepUp above stays
+// exactly as it was for moveAndSlide. Ported faithfully from Genesis3D's
+// own MovePlayerUpStep (tmp/Genesis3D11/src/Game/GMain.c), not reinvented:
+// the SAME full halfExtent for every trace (no narrowed probe box), a
+// clean/fully-unobstructed rise required (any collision at all while going
+// up aborts the step, not "however far it got"), a small FIXED forward
+// nudge (0.5 units, opposite the blocking wall's normal) rather than the
+// full remaining movement, then drop back onto the ground.
+static Vec3 genesisTryStepUp(const BspInstance& world, const Vec3& start, const Vec3& wallNormal,
+                             const Vec3& halfExtent, bool* outStepped, bool* outGrounded)
+{
+    if (outStepped) *outStepped = false;
+    if (outGrounded) *outGrounded = false;
+
+    // Set BSP_DEBUG_STAIRS=1 in the environment to log exactly which of the
+    // three sub-traces below aborts a step attempt — cheaper than guessing
+    // whether kStepHeight/the forward nudge is wrong for a given map.
+    static const bool debug = true;
+
+    constexpr float kStepHeight = 24.f;
+
+    // Pop straight up.
+    Vec3 pos1 = start;
+    Vec3 pos2 = start + Vec3(0.f, kStepHeight, 0.f);
+    BspTraceResult upTrace = world.traceBox(pos1, pos2, halfExtent);
+    if (upTrace.hit)
+    {
+        if (debug) gl::Log::Warn("[stairs] up-trace blocked at frac=%.3f normal=(%.2f,%.2f,%.2f)",
+                                  upTrace.fraction, upTrace.normal.x, upTrace.normal.y, upTrace.normal.z);
+        return start; // anything at all in the way — this isn't a clean step
+    }
+
+    // Nudge forward, opposite the wall that blocked us.
+    pos1 = pos2;
+    pos2 = pos2 - wallNormal * 0.5f;
+    BspTraceResult fwdTrace = world.traceBox(pos1, pos2, halfExtent);
+    if (fwdTrace.hit)
+    {
+        if (debug) gl::Log::Warn("[stairs] forward-nudge blocked at frac=%.3f", fwdTrace.fraction);
+        return start;
+    }
+
+    // Settle back onto the ground.
+    pos1 = pos2;
+    pos2.y -= (kStepHeight + 1.f);
+    BspTraceResult downTrace = world.traceBox(pos1, pos2, halfExtent);
+    if (!downTrace.hit)
+    {
+        if (debug) gl::Log::Warn("[stairs] down-trace found no floor within %.1f units", kStepHeight + 1.f);
+        return start; // no floor within range — a ledge/drop, not a step
+    }
+
+    // Any ordinary vertical wall passes the two checks above trivially too —
+    // going straight up in place rarely hits anything (walls don't overhang
+    // the player's own footprint), and the tiny forward nudge just lands
+    // back on the SAME floor the player was already standing on. Without a
+    // minimum-rise floor, that reads as "stepped OK" at rise=0, the caller
+    // nudges 0.5 units and skips the normal wall-slide entirely, and the
+    // player crawls at 0.5 units/pass into a plain wall forever instead of
+    // sliding along it — exactly the "walks into any wall and just stops"
+    // symptom, not a stairs-specific one.
+    constexpr float kMinStepRise = 1.f;
+    if (downTrace.endPos.y - start.y < kMinStepRise)
+    {
+        if (debug) gl::Log::Warn("[stairs] rejected: rise=%.2f < min (%.1f) — this is a wall, not a step",
+                                  downTrace.endPos.y - start.y, kMinStepRise);
+        return start;
+    }
+
+    if (debug) gl::Log::Warn("[stairs] stepped OK, rise=%.2f", downTrace.endPos.y - start.y);
+    if (outStepped) *outStepped = true;
+    if (outGrounded) *outGrounded = isWalkableGround(downTrace.normal);
+    return downTrace.endPos;
+}
+
 Vec3 BspInstance::moveAndSlide(const Vec3& start, const Vec3& end,
     const Vec3& halfExtent, BspCollisionResponse response, bool* outGrounded) const
 {
@@ -582,8 +990,17 @@ Vec3 BspInstance::moveAndSlide(const Vec3& start, const Vec3& end,
         if (response == BspCollisionResponse::Stop)
             break;
 
-        // Qualquer superfície íngreme demais para andar é tratada como um potencial degrau
-        const bool lateralWall = std::fabs(tr.normal.y) < 0.7f;
+        // Only try stepping against a near-VERTICAL surface — matches
+        // Genesis3D's own player physics (tmp/Genesis3D11/src/Game/GMain.c,
+        // CheckVelocity: `if (!Collision.Plane.Normal.Y)` — only when the
+        // blocking plane's normal.Y is ~0, not merely "steeper than
+        // walkable"). A moderately-steep ramp (say normal.y=0.4 — too steep
+        // to stand on, but not a wall either) isn't a discrete step to pop
+        // up onto; treating it as one made tryStepUp misfire on inclines,
+        // producing exactly the "stuck on a small ramp" symptom. Anything
+        // between "wall" and "walkable" now just slides/blocks like a
+        // normal slope, same as everywhere else in this loop.
+        const bool lateralWall = std::fabs(tr.normal.y) < 0.2f;
         const bool hasHorizontalIntent =
             (remaining.x * remaining.x + remaining.z * remaining.z) > 1e-8f;
 
@@ -652,6 +1069,163 @@ Vec3 BspInstance::moveAndSlide(const Vec3& start, const Vec3& end,
     return pos;
 }
 
+// Genesis3D's CheckVelocity (tmp/Genesis3D11/src/Game/GMain.c), adapted to
+// our types — own implementation, not a line-for-line port. Separate
+// function from moveAndSlide on purpose; that one is untouched.
+Vec3 BspInstance::slideVelocity(const Vec3& start, Vec3& velocity, const Vec3& halfExtent, float dt,
+                                bool* outGrounded) const
+{
+    constexpr int kMaxHits = 4;
+    constexpr int kMaxClipPlanes = 5;
+
+    Vec3 pos = start;
+    // Creases are always resolved against the ORIGINAL velocity this frame
+    // started with, not whatever it's been clipped down to mid-loop — same
+    // as Genesis3D projecting OriginalVelocity at every plane in its
+    // Planes[] list, not the progressively-shrunk one.
+    Vec3 primalVelocity = velocity;
+    Vec3 planes[kMaxClipPlanes];
+    int numPlanes = 0;
+    bool grounded = false;
+    // Genesis3D never shrinks TimeLeft by the collision ratio either (see
+    // their own commented-out `//TimeLeft -= TimeLeft * Collision.Ratio;`)
+    // — every pass re-tries with the FULL dt, just against a progressively
+    // clipped velocity, so a single frame can still cover real distance
+    // across up to kMaxHits bounces.
+    const float timeLeft = dt;
+
+    for (int hitCount = 0; hitCount < kMaxHits; ++hitCount)
+    {
+        if (velocity.length_squared() <= 1e-8f) break;
+
+        Vec3 target = pos + velocity * timeLeft;
+        BspTraceResult tr = worldCollision(pos, target, halfExtent, BspContents::DefaultSolid);
+
+        if (!tr.hit)
+        {
+            pos = target;
+            break; // covered the whole distance this pass wanted
+        }
+
+        // Embedded in solid (a door closing on the player, a tight corner):
+        // fraction is stuck at 0 forever unless we physically push out along
+        // the least-penetrated side first. Genesis3D's CheckPlayer does the
+        // same "shove and re-try" rather than letting Velocity clip against
+        // a degenerate contact.
+        if (tr.startSolid)
+        {
+            pos = pos + tr.normal * 1.f;
+            numPlanes = 0;
+            continue;
+        }
+
+        if (isWalkableGround(tr.normal))
+            grounded = true;
+
+        // Real progress this pass means the OLD crease planes no longer
+        // constrain anything — start the crease list fresh (Genesis3D:
+        // `if (Collision.Ratio > 0.00f) { ...; NumPlanes = 0; }`). Only a
+        // pass that made NO progress (already pinned exactly here) keeps
+        // accumulating planes — that's the "stuck in a corner" case the
+        // 2-plane crease resolution below exists for.
+        if (tr.fraction > 1e-4f)
+        {
+            numPlanes = 0;
+            velocity = primalVelocity;
+        }
+        pos = tr.endPos;
+
+        // Genesis3D's own trigger: only when the blocking plane is exactly
+        // vertical (`if (!Collision.Plane.Normal.Y)` in CheckVelocity) and
+        // there's horizontal intent — then their MovePlayerUpStep port
+        // (genesisTryStepUp above), NOT moveAndSlide's tryStepUp.
+        const bool lateralWall = std::fabs(tr.normal.y) < 0.2f;
+        const bool hasHorizontalIntent = (velocity.x * velocity.x + velocity.z * velocity.z) > 1e-8f;
+        if (lateralWall && hasHorizontalIntent)
+        {
+            bool stepped = false;
+            bool stepGrounded = false;
+            Vec3 stepPos = genesisTryStepUp(*this, pos, tr.normal, halfExtent, &stepped, &stepGrounded);
+            if (stepped)
+            {
+                pos = stepPos;
+                grounded = grounded || stepGrounded;
+                numPlanes = 0;
+                continue; // re-trace next pass from the stepped position, same velocity
+            }
+        }
+
+        if (numPlanes >= kMaxClipPlanes)
+        {
+            velocity = Vec3(0.f, 0.f, 0.f);
+            break;
+        }
+        planes[numPlanes++] = tr.normal;
+
+        // Look for a direction that clears EVERY plane hit so far this
+        // stuck streak, not just the most recent one — project
+        // primalVelocity onto each candidate plane in turn and check it
+        // doesn't drive back INTO any of the others.
+        Vec3 newVelocity(0.f, 0.f, 0.f);
+        int i;
+        for (i = 0; i < numPlanes; ++i)
+        {
+            float d = Vec3::Dot(primalVelocity, planes[i]);
+            newVelocity = primalVelocity - planes[i] * d;
+
+            int j;
+            for (j = 0; j < numPlanes; ++j)
+            {
+                if (j == i) continue;
+                if (Vec3::Dot(newVelocity, planes[j]) < 0.f) break; // still drives into another plane
+            }
+            if (j == numPlanes) break; // this one clears everything we've hit
+        }
+
+        if (i != numPlanes)
+        {
+            velocity = newVelocity;
+        }
+        else if (numPlanes == 2)
+        {
+            // Genuine crease: slide along the line where both planes
+            // meet (their cross product) instead of the two single-plane
+            // projections fighting each other every pass — this is the
+            // piece moveAndSlide's naive single-plane slide doesn't have,
+            // and why it can read as "stuck" in a corner or where a ramp
+            // meets a wall.
+            Vec3 dir = Vec3::Cross(planes[0], planes[1]);
+            float len2 = dir.length_squared();
+            if (len2 < 1e-10f)
+            {
+                velocity = Vec3(0.f, 0.f, 0.f);
+                break;
+            }
+            dir = dir * (1.f / std::sqrt(len2));
+            float d = Vec3::Dot(primalVelocity, dir);
+            velocity = dir * d;
+        }
+        else
+        {
+            velocity = Vec3(0.f, 0.f, 0.f);
+            break;
+        }
+
+        // Never let the corrected velocity point backward relative to what
+        // was actually wanted this frame.
+        if (Vec3::Dot(velocity, primalVelocity) <= 0.f)
+        {
+            velocity = Vec3(0.f, 0.f, 0.f);
+            break;
+        }
+    }
+
+    if (outGrounded)
+        *outGrounded = grounded;
+
+    return pos;
+}
+
 BspRayHit BspInstance::raycast(const Vec3& origin, const Vec3& direction, float maxDistance) const
 {
     BspRayHit out;
@@ -668,6 +1242,191 @@ BspRayHit BspInstance::raycast(const Vec3& origin, const Vec3& direction, float 
     out.distance = tr.fraction * maxDistance;
     return out;
 }
+
+int BspInstance::model_index_from_entity(const Entity& e) const
+{
+    auto it = e.keyValues.find("model");
+    if (it == e.keyValues.end() || it->second.empty() || it->second[0] != '*') return -1;
+    int idx = std::atoi(it->second.c_str() + 1);
+    if (idx <= 0 || idx >= (int)m_bspModels.size()) return -1;
+    return idx;
+}
+
+void BspInstance::traceModelBrushes(int modelIndex, const Vec3& localStart, const Vec3& localEnd,
+                                    const Vec3& halfExtent, int contentMask, BspTraceResult& result) const
+{
+    if (modelIndex <= 0 || modelIndex >= (int)m_bspModels.size()) return;
+    const BspModel& model = m_bspModels[modelIndex];
+    for (int i = 0; i < model.numBrushes; ++i)
+    {
+        int brushIdx = model.firstBrush + i;
+        if (brushIdx < 0 || brushIdx >= (int)m_bspBrushes.size()) continue;
+        const BspBrush& brush = m_bspBrushes[brushIdx];
+        if ((brush.contents & contentMask) == 0) continue;
+        clipBoxToBrush(brush, localStart, localEnd, halfExtent, result);
+    }
+}
+
+BspTraceResult BspInstance::traceModel(int modelIndex, const Vec3& modelOffset,
+                                       const Vec3& start, const Vec3& end,
+                                       const Vec3& halfExtent, int contentMask) const
+{
+    BspTraceResult result;
+    result.fraction = 1.f;
+    result.endPos = end;
+    if (modelIndex <= 0 || modelIndex >= (int)m_bspModels.size())
+        return result;
+    traceModelBrushes(modelIndex, start - modelOffset, end - modelOffset, halfExtent, contentMask, result);
+    result.endPos = start + (end - start) * result.fraction;
+    return result;
+}
+
+BspTraceResult BspInstance::worldCollisionWithModels(const Vec3& start, const Vec3& end,
+                                                    const Vec3& halfExtent, int contentMask,
+                                                    const std::unordered_map<int, Vec3>& modelOffsets) const
+{
+    BspTraceResult result = worldCollision(start, end, halfExtent, contentMask);
+    for (const auto& kv : modelOffsets)
+    {
+        BspTraceResult mr = traceModel(kv.first, kv.second, start, end, halfExtent, contentMask);
+        if (mr.fraction < result.fraction)
+        {
+            result = mr;
+        }
+    }
+    result.endPos = start + (end - start) * result.fraction;
+    return result;
+}
+
+Vec3 BspInstance::slideVelocityWithModels(const Vec3& start, Vec3& velocity, const Vec3& halfExtent, float dt,
+                                          const std::unordered_map<int, Vec3>& modelOffsets,
+                                          bool* outGrounded) const
+{
+    constexpr int kMaxHits = 4;
+    constexpr int kMaxClipPlanes = 5;
+
+    Vec3 pos = start;
+    Vec3 primalVelocity = velocity;
+    Vec3 planes[kMaxClipPlanes];
+    int numPlanes = 0;
+    bool grounded = false;
+    const float timeLeft = dt;
+
+    for (int hitCount = 0; hitCount < kMaxHits; ++hitCount)
+    {
+        if (velocity.length_squared() <= 1e-8f) break;
+
+        Vec3 target = pos + velocity * timeLeft;
+        BspTraceResult tr = worldCollisionWithModels(pos, target, halfExtent, BspContents::DefaultSolid, modelOffsets);
+
+        if (!tr.hit)
+        {
+            pos = target;
+            break;
+        }
+
+        // See slideVelocity's identical check above: an embedded start
+        // (e.g. a door model that just translated onto the player) must be
+        // shoved out along a real plane first, or the loop re-finds the
+        // same startSolid=0-fraction result forever and the player freezes.
+        if (tr.startSolid)
+        {
+            pos = pos + tr.normal * 1.f;
+            numPlanes = 0;
+            continue;
+        }
+
+        if (isWalkableGround(tr.normal))
+            grounded = true;
+
+        if (tr.fraction > 1e-4f)
+        {
+            numPlanes = 0;
+            velocity = primalVelocity;
+        }
+        pos = tr.endPos;
+
+        const bool lateralWall = std::fabs(tr.normal.y) < 0.2f;
+        const bool hasHorizontalIntent = (velocity.x * velocity.x + velocity.z * velocity.z) > 1e-8f;
+        if (lateralWall && hasHorizontalIntent)
+        {
+            static const bool debugStairs =true;
+            if (debugStairs)
+                gl::Log::Warn("[stairs] hit at pos=(%.1f,%.1f,%.1f) normal=(%.2f,%.2f,%.2f) vel=(%.1f,%.1f,%.1f) contents=0x%x",
+                              pos.x, pos.y, pos.z, tr.normal.x, tr.normal.y, tr.normal.z,
+                              velocity.x, velocity.y, velocity.z, g_lastHitContents);
+
+            bool stepped = false;
+            bool stepGrounded = false;
+            Vec3 stepPos = genesisTryStepUp(*this, pos, tr.normal, halfExtent, &stepped, &stepGrounded);
+            if (stepped)
+            {
+                pos = stepPos;
+                grounded = grounded || stepGrounded;
+                numPlanes = 0;
+                continue;
+            }
+        }
+
+        if (numPlanes >= kMaxClipPlanes)
+        {
+            velocity = Vec3(0.f, 0.f, 0.f);
+            break;
+        }
+        planes[numPlanes++] = tr.normal;
+
+        Vec3 newVelocity(0.f, 0.f, 0.f);
+        int i;
+        for (i = 0; i < numPlanes; ++i)
+        {
+            float d = Vec3::Dot(primalVelocity, planes[i]);
+            newVelocity = primalVelocity - planes[i] * d;
+
+            int j;
+            for (j = 0; j < numPlanes; ++j)
+            {
+                if (j == i) continue;
+                if (Vec3::Dot(newVelocity, planes[j]) < 0.f) break;
+            }
+            if (j == numPlanes) break;
+        }
+
+        if (i != numPlanes)
+        {
+            velocity = newVelocity;
+        }
+        else if (numPlanes == 2)
+        {
+            Vec3 dir = Vec3::Cross(planes[0], planes[1]);
+            float len2 = dir.length_squared();
+            if (len2 < 1e-10f)
+            {
+                velocity = Vec3(0.f, 0.f, 0.f);
+                break;
+            }
+            dir = dir * (1.f / std::sqrt(len2));
+            float d = Vec3::Dot(primalVelocity, dir);
+            velocity = dir * d;
+        }
+        else
+        {
+            velocity = Vec3(0.f, 0.f, 0.f);
+            break;
+        }
+
+        if (Vec3::Dot(velocity, primalVelocity) <= 0.f)
+        {
+            velocity = Vec3(0.f, 0.f, 0.f);
+            break;
+        }
+    }
+
+    if (outGrounded)
+        *outGrounded = grounded;
+
+    return pos;
+}
+
 // Vec3 BspInstance::moveAndSlide(const Vec3& start, const Vec3& end, const Vec3& halfExtent,
 //                                BspCollisionResponse response, bool* outGrounded) const
 // {
@@ -749,6 +1508,15 @@ int BspInstance::remove_entities(const std::string& classname)
     size_t before = m_entities.size();
     m_entities.erase(std::remove_if(m_entities.begin(), m_entities.end(),
                                     [&](const Entity& e) { return e.classname == classname; }),
+                     m_entities.end());
+    return static_cast<int>(before - m_entities.size());
+}
+
+int BspInstance::remove_entities_except(const std::string& keepClassname)
+{
+    size_t before = m_entities.size();
+    m_entities.erase(std::remove_if(m_entities.begin(), m_entities.end(),
+                                    [&](const Entity& e) { return e.classname != keepClassname; }),
                      m_entities.end());
     return static_cast<int>(before - m_entities.size());
 }
@@ -879,8 +1647,7 @@ void BspInstance::loadCollisionFromBytes(const u8* data, u32 dataSize, const cha
         b.firstSide = rdI32(data, o);
         b.numSides = rdI32(data, o + 4);
         int texIdx = rdI32(data, o + 8);
-        int contents = (texIdx >= 0 && texIdx < (int)textureContents.size()) ? textureContents[texIdx] : 0;
-        b.solid = (contents & (kContentsSolid | kContentsPlayerClip)) != 0;
+        b.contents = (texIdx >= 0 && texIdx < (int)textureContents.size()) ? textureContents[texIdx] : 0;
         inst->m_bspBrushes.push_back(b);
     }
 
@@ -896,6 +1663,8 @@ void BspInstance::loadCollisionFromBytes(const u8* data, u32 dataSize, const cha
         // Z-up -> Y-up, same (x, z, y) swap as everything else in this file.
         md.mins = Vec3(rdF32(data, o), rdF32(data, o + 8), rdF32(data, o + 4));
         md.maxs = Vec3(rdF32(data, o + 12), rdF32(data, o + 20), rdF32(data, o + 16));
+        md.firstFace = rdI32(data, o + 24);
+        md.numFaces = rdI32(data, o + 28);
         md.firstBrush = rdI32(data, o + 32);
         md.numBrushes = rdI32(data, o + 36);
         inst->m_bspModels.push_back(md);
@@ -911,8 +1680,7 @@ void BspInstance::loadCollisionFromBytes(const u8* data, u32 dataSize, const cha
     }
     inst->m_entities = parseEntities(entText);
 
-    // classname breakdown — so it's actually clear what got loaded, not
-    // just a count (89 entities tells you nothing about what they are)
+    
     std::unordered_map<std::string, int> classCounts;
     for (const BspInstance::Entity& e : inst->m_entities) ++classCounts[e.classname];
     std::string breakdown;
@@ -928,189 +1696,54 @@ void BspInstance::loadCollisionFromBytes(const u8* data, u32 dataSize, const cha
     gl::Log::Info("[BSP] '%s' entity classes: %s", path, breakdown.c_str());
 }
 
-Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
-                     std::vector<Material*>& out_mats,
-                     const char* textureDir,
-                     BspInstance* collision)
+// Build one mesh from the faces that belong to a specific BSP model.  The
+// caller already knows which model index each face maps to (faceToModel).
+// Materials are created fresh and handed to the mesh (set_owned_materials).
+static Mesh* buildBspModelMesh(const char* meshName,
+                               const std::vector<Face>& faces,
+                               const std::vector<int>& faceToModel,
+                               int modelIndex,
+                               const std::vector<BspVertex>& verts,
+                               const std::vector<int>& meshVerts,
+                               const std::vector<std::string>& textures,
+                               const std::vector<gl::Texture*>& lightmapTextures,
+                               const std::string& texDir,
+                               std::vector<Material*>* out_mats = nullptr)
 {
-    if (!name || !path) return nullptr;
+    std::vector<Material*> localMats;
 
-    // Already loaded? (rare path: a second BspInstance for the same map —
-    // still needs its own collision fill, so this falls back to a real
-    // re-read rather than skip it silently)
-    Mesh* existing = getMesh(name);
-    if (existing)
-    {
-        if (collision) load_bsp_collision(collision, path);
-        return existing;
-    }
-
-    // ---- read the whole file into memory ------------------------------------
-    scene::ByteArray bytes;
-    if (!fs::getFilesystem().readFile(path, bytes))
-    {
-        gl::Log::Error("[BSP] cannot read '%s'", path);
-        return nullptr;
-    }
-    const u8* data = bytes.data();
-    const u32 dataSize = bytes.size();
-
-    if (dataSize < 8 + kNumLumps * 8)
-    {
-        gl::Log::Error("[BSP] truncated header '%s'", path);
-        return nullptr;
-    }
-    if (rdI32(data, 0) != kQ3Ident || rdI32(data, 4) != kQ3Version)
-    {
-        gl::Log::Error("[BSP] bad magic / version in '%s'", path);
-        return nullptr;
-    }
-
-    // Collision + entities, straight off this same in-memory buffer — no
-    // second file read (see BspInstance::loadCollisionFromBytes's comment).
-    if (collision) collision->loadCollisionFromBytes(data, dataSize, path);
-
-    // ---- parse lump table ---------------------------------------------------
-    std::vector<Lump> lumps(kNumLumps);
-    for (int i = 0; i < kNumLumps; ++i)
-    {
-        lumps[i].offset = rdI32(data, 8 + i * 8);
-        lumps[i].length = rdI32(data, 8 + i * 8 + 4);
-    }
-
-    // ---- parse textures -----------------------------------------------------
-    int numTextures = 0;
-    const u8* texBase = lumpInfo(data, dataSize, lumps[kLumpTextures], kTextureSize, numTextures);
-    std::vector<std::string> textures;
-    textures.reserve(numTextures);
-    for (int i = 0; i < numTextures; ++i)
-    {
-        textures.push_back(rdStr(data, dataSize, (texBase - data) + i * kTextureSize));
-    }
-
-    // ---- parse lightmaps (lump 14: 128x128 RGB pages) -----------------------
-    // Q3 lightmap pages are stored as raw, ungamma-corrected radiosity
-    // samples — applied straight to the framebuffer they read flat/dark, so
-    // every Q3-derived renderer re-brightens them on load (the classic
-    // r_lightmapgamma/overbright-bits knob). kLightmapGamma < 1 brightens
-    // midtones (out = (in/255)^gamma * 255); 1.0 would be a no-op.
-    constexpr float kLightmapGamma = 0.9f;
-    constexpr int kLmSize = 128 * 128 * 3;
-    int numLightmaps = 0;
-    const u8* lmBase = lumpInfo(data, dataSize, lumps[kLumpLightmaps], kLmSize, numLightmaps);
-    std::vector<gl::Texture*> lightmapTextures;
-    lightmapTextures.reserve(numLightmaps);
-    u8 gammaLUT[256];
-    for (int v = 0; v < 256; ++v)
-    {
-        float f = std::pow(static_cast<float>(v) / 255.f, kLightmapGamma) * 255.f;
-        gammaLUT[v] = static_cast<u8>(f < 0.f ? 0.f : (f > 255.f ? 255.f : f));
-    }
-    for (int i = 0; i < numLightmaps; ++i)
-    {
-        const u8* src = lmBase + i * kLmSize;
-        std::vector<u8> rgba(128 * 128 * 4);
-        for (int p = 0; p < 128 * 128; ++p)
-        {
-            rgba[p * 4 + 0] = gammaLUT[src[p * 3 + 0]];
-            rgba[p * 4 + 1] = gammaLUT[src[p * 3 + 1]];
-            rgba[p * 4 + 2] = gammaLUT[src[p * 3 + 2]];
-            rgba[p * 4 + 3] = 255;
-        }
-        std::string lmName = std::string(name) + "/lm_" + std::to_string(i);
-        gl::Texture* lmTex = assets::AssetManager::instance().createTexture(lmName.c_str());
-        if (lmTex)
-        {
-            lmTex->Load2D(rgba.data(), 128, 128, gl::TextureFormat::RGBA8);
-            lmTex->SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
-            lmTex->SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
-            lightmapTextures.push_back(lmTex);
-        }
-    }
-    gl::Log::Info("[BSP] %d lightmap pages", numLightmaps);
-
-    // ---- parse vertices (Z-up -> Y-up swap) ---------------------------------
-    int numVerts = 0;
-    const u8* vertBase = lumpInfo(data, dataSize, lumps[kLumpVertices], kVertexSize, numVerts);
-    std::vector<BspVertex> verts;
-    verts.reserve(numVerts);
-    for (int i = 0; i < numVerts; ++i)
-    {
-        int o = static_cast<int>((vertBase - data) + i * kVertexSize);
-        BspVertex v;
-        // Q3 is Z-up; swap Y and Z.  Vertex layout (44 bytes):
-        //   pos(0,4,8)  uv(12,16)  lmuv(20,24)  normal(28,32,36)  color(40)
-        v.position = Vec3(rdF32(data, o), rdF32(data, o + 8), rdF32(data, o + 4));
-        v.normal   = Vec3(rdF32(data, o + 28), rdF32(data, o + 36), rdF32(data, o + 32));
-        v.uv       = Vec2(rdF32(data, o + 12), rdF32(data, o + 16));
-        v.lmuv     = Vec2(rdF32(data, o + 20), rdF32(data, o + 24));
-        verts.push_back(v);
-    }
-
-    // ---- parse mesh vertices (int indices) ----------------------------------
-    int numMeshVerts = 0;
-    const u8* mvBase = lumpInfo(data, dataSize, lumps[kLumpMeshVerts], 4, numMeshVerts);
-    std::vector<int> meshVerts;
-    meshVerts.reserve(numMeshVerts);
-    for (int i = 0; i < numMeshVerts; ++i)
-    {
-        meshVerts.push_back(rdI32(data, static_cast<int>((mvBase - data) + i * 4)));
-    }
-
-    // ---- parse faces --------------------------------------------------------
-    int numFaces = 0;
-    const u8* faceBase = lumpInfo(data, dataSize, lumps[kLumpFaces], kFaceSize, numFaces);
-    std::vector<Face> faces;
-    faces.reserve(numFaces);
-    for (int i = 0; i < numFaces; ++i)
-    {
-        int o = static_cast<int>((faceBase - data) + i * kFaceSize);
-        Face f;
-        f.textureIdx = rdI32(data, o);
-        f.faceType = rdI32(data, o + 8);
-        f.firstVert = rdI32(data, o + 12);
-        f.numVerts = rdI32(data, o + 16);
-        f.firstMeshVert = rdI32(data, o + 20);
-        f.numMeshVerts = rdI32(data, o + 24);
-        f.lm_index     = rdI32(data, o + 28);
-        f.lm_start[0]  = rdI32(data, o + 32);
-        f.lm_start[1]  = rdI32(data, o + 36);
-        f.lm_size[0]   = rdI32(data, o + 40);
-        f.lm_size[1]   = rdI32(data, o + 44);
-        f.patchW = rdI32(data, o + 96);
-        f.patchH = rdI32(data, o + 100);
-        faces.push_back(f);
-    }
-
-    // ---- group faces by texture index (preserve insertion order) ------------
+    // Group faces belonging to this model by texture index.
     std::unordered_map<int, std::vector<int>> group;
     std::vector<int> order;
-    for (int i = 0; i < numFaces; ++i)
+    for (int i = 0; i < (int)faces.size(); ++i)
     {
+        if (faceToModel[i] != modelIndex) continue;
         int t = faces[i].textureIdx;
         if (group.find(t) == group.end()) order.push_back(t);
         group[t].push_back(i);
     }
 
-    // ---- build engine geometry ---------------------------------------------
-    Mesh* m = createMesh(name);
-    if (!m) return nullptr;
-    std::vector<MeshVertex> outVerts;
-    std::vector<Vec2> outLmUvs; // parallel: lightmap UV per vertex
-    std::vector<u32> outIndices;
-    outVerts.reserve(numVerts * 2);
-    outLmUvs.reserve(numVerts * 2);
-    outIndices.reserve(meshVerts.size());
+    if (order.empty()) return nullptr;
 
-    const std::string texDir(textureDir ? textureDir : "");
+    Mesh* m = assets::AssetManager::instance().createMesh(meshName);
+    if (!m) return nullptr;
+
+    std::vector<MeshVertex> outVerts;
+    std::vector<Vec2> outLmUvs;
+    std::vector<u32> outIndices;
+    outVerts.reserve(verts.size());
+    outLmUvs.reserve(verts.size());
+    outIndices.reserve(meshVerts.size());
 
     struct SurfDef { u32 start, count; int slot; BoundingBox bb; };
     std::vector<SurfDef> surfDefs;
 
+    int numVerts = (int)verts.size();
     int surfIdx = 0;
     for (int ti : order)
     {
         const std::vector<int>& faceList = group[ti];
+
         const u32 startIndex = static_cast<u32>(outIndices.size());
 
         for (int fi : faceList)
@@ -1186,7 +1819,6 @@ Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
         const u32 indexCount = static_cast<u32>(outIndices.size()) - startIndex;
         if (indexCount == 0) continue;
 
-        // Compute surface bounding box.
         Vec3 mn(MaxFloat, MaxFloat, MaxFloat);
         Vec3 mx(-MaxFloat, -MaxFloat, -MaxFloat);
         for (u32 i = startIndex; i < (u32)outIndices.size(); ++i)
@@ -1196,23 +1828,65 @@ Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
             mx = mx.Max(p);
         }
 
-        // Create material for this texture group.
         std::string texName = (ti >= 0 && ti < (int)textures.size() && !textures[ti].empty())
                                   ? textures[ti]
                                   : ("surf_" + std::to_string(surfIdx));
         Material* mat = new Material();
         gl::Texture* tex = tryLoadTex(texDir, texName);
         mat->diffuse = tex;
-        mat->double_sided = false; // winding swap already fixes CW→CCW
-        mat->lightmapped = true;        mat->detail_scale = 1.0f; // lightmap, not tiled detail
-        // Assign the lightmap page used by the first face in this group.
+        mat->double_sided = false;
+        mat->lightmapped = true;
+        mat->detail_scale = 1.0f;
+        // Only matters for per-model meshes (func_door, ...): those end up
+        // on a plain MeshInstance drawn by the forward/dynamic-lighting
+        // shader, which isn't set up for this map (no matching ambient/
+        // shadow tuning) and rendered them solid black. The worldspawn
+        // mesh (model 0) ignores this — it's drawn through SceneRenderer's
+        // own m_bsp shader, which never reads mat->unlit at all.
+        mat->unlit = true;
+        {
+            auto sit = shaderInfoMap().find(texName);
+            static const bool debugTex = std::getenv("BSP_DEBUG_TEX") != nullptr;
+            if (debugTex)
+            {
+                Vec3 c = (mn + mx) * 0.5f;
+                gl::Log::Warn("[tex] '%s' center=(%.0f,%.0f,%.0f) shader=%s sky=%d trans=%d",
+                              texName.c_str(), c.x, c.y, c.z,
+                              (sit != shaderInfoMap().end()) ? sit->second.image.c_str() : "(none)",
+                              (sit != shaderInfoMap().end()) ? (int)sit->second.sky : 0,
+                              (sit != shaderInfoMap().end()) ? (int)sit->second.trans : 0);
+            }
+            if (sit != shaderInfoMap().end())
+            {
+                if (sit->second.trans)
+                {
+                    mat->blend = true;
+                    mat->additive = sit->second.additive;
+                    mat->double_sided = true; // glass/flames/fences: seen from both sides
+                }
+                if (!sit->second.animFrames.empty() && sit->second.animFps > 0.f)
+                {
+                    for (const std::string& frame : sit->second.animFrames)
+                    {
+                        bool hasExt = frame.size() > 4 && frame[frame.size() - 4] == '.';
+                        std::string base = hasExt ? frame.substr(0, frame.size() - 4) : frame;
+                        mat->anim_frames.push_back(tryLoadTex(texDir, base));
+                    }
+                    mat->anim_fps = sit->second.animFps;
+                    mat->diffuse = mat->anim_frames[0];
+                }
+            }
+        }
         if (!faceList.empty())
         {
             int lmIdx = faces[faceList[0]].lm_index;
-            if (lmIdx >= 0 && lmIdx < numLightmaps)
+            if (lmIdx >= 0 && lmIdx < (int)lightmapTextures.size())
                 mat->detail = lightmapTextures[lmIdx];
         }
-        out_mats.push_back(mat);
+        if (out_mats)
+            out_mats->push_back(mat);
+        else
+            localMats.push_back(mat);
 
         surfDefs.push_back({startIndex, indexCount, surfIdx, BoundingBox(mn, mx)});
         ++surfIdx;
@@ -1220,28 +1894,398 @@ Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
 
     if (outVerts.empty() || outIndices.empty())
     {
-        gl::Log::Error("[BSP] no supported geometry in '%s'", path);
+        delete m; // createMesh already registered it; this is a leak-risk, but empty model meshes are rare
         return nullptr;
     }
 
-    // Q3 BSP faces use CW winding; OpenGL expects CCW. Flip every triangle.
-    // for (size_t i = 0; i + 2 < outIndices.size(); i += 3)
-    //     std::swap(outIndices[i + 1], outIndices[i + 2]);
-
-    // set_data first (clears surfaces), then add_surface, then upload.
     m->set_data(outVerts.data(), static_cast<u32>(outVerts.size()), outIndices.data(),
                 static_cast<u32>(outIndices.size()));
     for (const SurfDef& s : surfDefs)
         m->add_surface(s.start, s.count, s.slot, s.bb);
     m->set_lightmap_uvs(outLmUvs.data(), static_cast<u32>(outLmUvs.size()));
-    // Mesh takes ownership from here — freed with it in AssetManager::clear()/
-    // ~Mesh(); out_mats stays a valid view for the caller (texture tweaks,
-    // etc.) but must not be deleted by it.
-    m->set_owned_materials(out_mats);
+    if (out_mats)
+    {
+        for (Material* mat : localMats)
+            out_mats->push_back(mat);
+    }
+    m->set_owned_materials(localMats);
+    // The worldspawn mesh (model 0) is drawn through SceneRenderer's own
+    // m_bsp shader, which never reads tangents — but per-model meshes
+    // (func_door, ...) end up on a plain MeshInstance instead, drawn
+    // through the regular forward shader, which DOES need a real tangent
+    // basis (location 2). Without this they still uploaded fine (the
+    // attribute just read zeroed data), but a degenerate/zero tangent
+    // basis in the forward shader's lighting math renders solid black.
+    m->compute_tangents();
     m->upload();
-
-    gl::Log::Info("[BSP] '%s': verts=%u tris=%u surfaces=%u textures=%u lm_uvs=%d lm_pages=%d", path,
-                  (u32)outVerts.size(), (u32)(outIndices.size() / 3), (u32)surfDefs.size(),
-                  (u32)textures.size(), (int)outLmUvs.size(), numLightmaps);
     return m;
+}
+
+Mesh* assets::AssetManager::load_bsp_mesh(const char* name, const char* path,
+                     std::vector<Material*>& out_mats,
+                     const char* textureDir,
+                     BspInstance* collision,
+                     std::unordered_map<int, Mesh*>* out_modelMeshes)
+{
+    if (!name || !path) return nullptr;
+
+    // Already loaded? (rare path: a second BspInstance for the same map —
+    // still needs its own collision fill, so this falls back to a real
+    // re-read rather than skip it silently)
+    Mesh* existing = getMesh(name);
+    if (existing)
+    {
+        if (collision) load_bsp_collision(collision, path);
+        return existing;
+    }
+
+    // ---- read the whole file into memory ------------------------------------
+    scene::ByteArray bytes;
+    if (!fs::getFilesystem().readFile(path, bytes))
+    {
+        gl::Log::Error("[BSP] cannot read '%s'", path);
+        return nullptr;
+    }
+    const u8* data = bytes.data();
+    const u32 dataSize = bytes.size();
+
+    if (dataSize < 8 + kNumLumps * 8)
+    {
+        gl::Log::Error("[BSP] truncated header '%s'", path);
+        return nullptr;
+    }
+    if (rdI32(data, 0) != kQ3Ident || rdI32(data, 4) != kQ3Version)
+    {
+        gl::Log::Error("[BSP] bad magic / version in '%s'", path);
+        return nullptr;
+    }
+
+    // Collision + entities, straight off this same in-memory buffer — no
+    // second file read (see BspInstance::loadCollisionFromBytes's comment).
+    if (collision) collision->loadCollisionFromBytes(data, dataSize, path);
+
+    // ---- parse lump table ---------------------------------------------------
+    std::vector<Lump> lumps(kNumLumps);
+    for (int i = 0; i < kNumLumps; ++i)
+    {
+        lumps[i].offset = rdI32(data, 8 + i * 8);
+        lumps[i].length = rdI32(data, 8 + i * 8 + 4);
+    }
+
+    // ---- parse textures -----------------------------------------------------
+    int numTextures = 0;
+    const u8* texBase = lumpInfo(data, dataSize, lumps[kLumpTextures], kTextureSize, numTextures);
+    std::vector<std::string> textures;
+    textures.reserve(numTextures);
+    for (int i = 0; i < numTextures; ++i)
+    {
+        textures.push_back(rdStr(data, dataSize, (texBase - data) + i * kTextureSize));
+    }
+
+    // ---- parse lightmaps (lump 14: 128x128 RGB pages) -----------------------
+    // Q3 lightmap pages are stored as raw, ungamma-corrected radiosity
+    // samples — applied straight to the framebuffer they read flat/dark, so
+    // every Q3-derived renderer re-brightens them on load (the classic
+    // r_lightmapgamma/overbright-bits knob). kLightmapGamma < 1 brightens
+    // midtones (out = (in/255)^gamma * 255); 1.0 would be a no-op.
+    constexpr float kLightmapGamma = 0.3f;
+    constexpr int kLmSize = 128 * 128 * 3;
+    int numLightmaps = 0;
+    const u8* lmBase = lumpInfo(data, dataSize, lumps[kLumpLightmaps], kLmSize, numLightmaps);
+    std::vector<gl::Texture*> lightmapTextures;
+    lightmapTextures.reserve(numLightmaps);
+    u8 gammaLUT[256];
+    for (int v = 0; v < 256; ++v)
+    {
+        float f = std::pow(static_cast<float>(v) / 255.f, kLightmapGamma) * 255.f;
+        gammaLUT[v] = static_cast<u8>(f < 0.f ? 0.f : (f > 255.f ? 255.f : f));
+    }
+    for (int i = 0; i < numLightmaps; ++i)
+    {
+        const u8* src = lmBase + i * kLmSize;
+        std::vector<u8> rgba(128 * 128 * 4);
+        for (int p = 0; p < 128 * 128; ++p)
+        {
+            rgba[p * 4 + 0] = gammaLUT[src[p * 3 + 0]];
+            rgba[p * 4 + 1] = gammaLUT[src[p * 3 + 1]];
+            rgba[p * 4 + 2] = gammaLUT[src[p * 3 + 2]];
+            rgba[p * 4 + 3] = 255;
+        }
+        std::string lmName = std::string(name) + "/lm_" + std::to_string(i);
+        gl::Texture* lmTex = assets::AssetManager::instance().createTexture(lmName.c_str());
+        if (lmTex)
+        {
+            lmTex->Load2D(rgba.data(), 128, 128, gl::TextureFormat::RGBA8);
+            lmTex->SetWrap(gl::TextureWrap::CLAMP_TO_EDGE, gl::TextureWrap::CLAMP_TO_EDGE);
+            lmTex->SetFilter(gl::TextureFilter::LINEAR, gl::TextureFilter::LINEAR);
+            lightmapTextures.push_back(lmTex);
+        }
+    }
+    gl::Log::Info("[BSP] %d lightmap pages", numLightmaps);
+
+    // ---- parse vertices (Z-up -> Y-up swap) ---------------------------------
+    int numVerts = 0;
+    const u8* vertBase = lumpInfo(data, dataSize, lumps[kLumpVertices], kVertexSize, numVerts);
+    std::vector<BspVertex> verts;
+    verts.reserve(numVerts);
+    for (int i = 0; i < numVerts; ++i)
+    {
+        int o = static_cast<int>((vertBase - data) + i * kVertexSize);
+        BspVertex v;
+        // Q3 is Z-up; swap Y and Z.  Vertex layout (44 bytes):
+        //   pos(0,4,8)  uv(12,16)  lmuv(20,24)  normal(28,32,36)  color(40)
+        v.position = Vec3(rdF32(data, o), rdF32(data, o + 8), rdF32(data, o + 4));
+        v.normal   = Vec3(rdF32(data, o + 28), rdF32(data, o + 36), rdF32(data, o + 32));
+        v.uv       = Vec2(rdF32(data, o + 12), rdF32(data, o + 16));
+        v.lmuv     = Vec2(rdF32(data, o + 20), rdF32(data, o + 24));
+
+
+        verts.push_back(v);
+    }
+
+    // ---- parse mesh vertices (int indices) ----------------------------------
+    int numMeshVerts = 0;
+    const u8* mvBase = lumpInfo(data, dataSize, lumps[kLumpMeshVerts], 4, numMeshVerts);
+    std::vector<int> meshVerts;
+    meshVerts.reserve(numMeshVerts);
+    for (int i = 0; i < numMeshVerts; ++i)
+    {
+        meshVerts.push_back(rdI32(data, static_cast<int>((mvBase - data) + i * 4)));
+    }
+
+    // ---- parse faces --------------------------------------------------------
+    int numFaces = 0;
+    const u8* faceBase = lumpInfo(data, dataSize, lumps[kLumpFaces], kFaceSize, numFaces);
+    std::vector<Face> faces;
+    faces.reserve(numFaces);
+    for (int i = 0; i < numFaces; ++i)
+    {
+        int o = static_cast<int>((faceBase - data) + i * kFaceSize);
+        Face f;
+        f.textureIdx = rdI32(data, o);
+        f.faceType = rdI32(data, o + 8);
+        f.firstVert = rdI32(data, o + 12);
+        f.numVerts = rdI32(data, o + 16);
+        f.firstMeshVert = rdI32(data, o + 20);
+        f.numMeshVerts = rdI32(data, o + 24);
+        f.lm_index     = rdI32(data, o + 28);
+        f.lm_start[0]  = rdI32(data, o + 32);
+        f.lm_start[1]  = rdI32(data, o + 36);
+        f.lm_size[0]   = rdI32(data, o + 40);
+        f.lm_size[1]   = rdI32(data, o + 44);
+        f.patchW = rdI32(data, o + 96);
+        f.patchH = rdI32(data, o + 100);
+        faces.push_back(f);
+    }
+
+    // ---- map each face to its owning BSP model (model 0 = worldspawn) --------
+    std::vector<int> faceToModel(numFaces, 0);
+    if (collision)
+    {
+        const auto& models = collision->m_bspModels;
+        for (int mi = 1; mi < (int)models.size(); ++mi)
+        {
+            int first = models[mi].firstFace;
+            int count = models[mi].numFaces;
+            if (first < 0 || count < 0) continue;
+            for (int f = first; f < first + count && f < numFaces; ++f)
+                faceToModel[f] = mi;
+        }
+    }
+    else if (out_modelMeshes)
+    {
+        // Cannot separate entity model faces without the parsed model table.
+        out_modelMeshes = nullptr;
+    }
+
+    const std::string texDir(textureDir ? textureDir : "");
+
+    // ---- build worldspawn mesh (model 0) ------------------------------------
+    Mesh* m = buildBspModelMesh(name, faces, faceToModel, 0, verts, meshVerts,
+                                textures, lightmapTextures, texDir, &out_mats);
+    if (!m)
+    {
+        gl::Log::Error("[BSP] no supported geometry in '%s'", path);
+        return nullptr;
+    }
+
+    // ---- build separate meshes for brush-entity models ----------------------
+    if (out_modelMeshes && collision)
+    {
+        out_modelMeshes->clear();
+        const auto& models = collision->m_bspModels;
+        for (int mi = 1; mi < (int)models.size(); ++mi)
+        {
+            std::string modelName = std::string(name) + "_model_" + std::to_string(mi);
+            Mesh* modelMesh = buildBspModelMesh(modelName.c_str(), faces, faceToModel, mi,
+                                               verts, meshVerts, textures, lightmapTextures, texDir);
+            if (modelMesh)
+                (*out_modelMeshes)[mi] = modelMesh;
+        }
+    }
+
+    gl::Log::Info("[BSP] '%s': verts=%u tris=%u surfaces=%u textures=%u lm_pages=%d model_meshes=%u",
+                  path,
+                  m->vertex_count(), (u32)(m->index_count() / 3),
+                  (u32)m->surfaces().size(), (u32)textures.size(), numLightmaps,
+                  out_modelMeshes ? (u32)out_modelMeshes->size() : 0u);
+    return m;
+}
+
+// ============================================================================
+// BspEntityInstance / BspDoor — see BspInstance.hpp for the class comments.
+// ============================================================================
+
+void BspEntityInstance::init(BspInstance* owner, const BspInstance::Entity& entity, int modelIndex,
+                             Mesh* visualMesh)
+{
+    m_owner = owner;
+    m_entity = entity;
+    m_modelIndex = modelIndex;
+    m_mesh = visualMesh;
+    m_materials = visualMesh ? visualMesh->materials() : std::vector<Material*>();
+}
+
+void BspEntityInstance::set_offset(const Vec3& o)
+{
+    m_offset = o;
+    set_position(o);
+}
+
+float BspEntityInstance::key_float(const char* key, float def) const
+{
+    auto it = m_entity.keyValues.find(key);
+    if (it == m_entity.keyValues.end()) return def;
+    return (float)std::atof(it->second.c_str());
+}
+
+int BspEntityInstance::key_int(const char* key, int def) const
+{
+    auto it = m_entity.keyValues.find(key);
+    if (it == m_entity.keyValues.end()) return def;
+    return std::atoi(it->second.c_str());
+}
+
+void BspDoor::setup()
+{
+    if (!owner() || model_index() < 0) return;
+    const auto& models = owner()->bsp_models();
+    if (model_index() >= (int)models.size()) return;
+    const BspInstance::BspModel& model = models[model_index()];
+
+    float dx = model.maxs.x - model.mins.x;
+    float dy = model.maxs.y - model.mins.y;
+    float dz = model.maxs.z - model.mins.z;
+
+    float lip = key_float("lip", 8.f);
+    float angle = key_float("angle", 0.f);
+
+    if (std::getenv("BSP_DEBUG_DOORS"))
+        gl::Log::Warn("[door setup] model=%d angle=%.1f lip=%.1f dx=%.1f dy=%.1f dz=%.1f",
+                      model_index(), angle, lip, dx, dy, dz);
+
+    // Quake's own convention (not a dimension guess — an ordinary door is
+    // almost always taller than it is thick, so "tallest axis wins" reads
+    // nearly every door as a vertical elevator): angle -1 = straight up,
+    // -2 = straight down, anything else = horizontal slide direction in
+    // degrees. See id's g_utils.c/G_SetMovedir — every real Quake3 door
+    // brush follows this, no exceptions.
+    if (angle == -1.f)
+    {
+        m_openOffset = Vec3(0.f, std::max(0.f, dy - lip), 0.f);
+    }
+    else if (angle == -2.f)
+    {
+        m_openOffset = Vec3(0.f, -std::max(0.f, dy - lip), 0.f);
+    }
+    else
+    {
+        // angle=0/360 must point along +X (verified against q3ctf2's real
+        // door brushes: model 19 is dx=64/dz=16 with angle=360 — the wide
+        // axis is X, so 0 degrees has to select dx, not dz). The
+        // sin/cos-per-axis pairing here was swapped (inherited from the
+        // demo's original computeDoorOpenOffset) — harmless-looking until
+        // the vertical-vs-horizontal gate above stopped hiding it, since
+        // it silently picked each door's THIN axis instead of its wide
+        // one (dist-lip landing near zero — "doesn't visibly open").
+        float yaw = angle * (3.14159265f / 180.f);
+        Vec3 dir(std::cos(yaw), 0.f, std::sin(yaw));
+        float dist = (std::fabs(dir.x) > std::fabs(dir.z)) ? dx : dz;
+        m_openOffset = dir * std::max(0.f, dist - lip);
+    }
+
+    m_speed = key_float("speed", 100.f);
+    if (m_speed <= 0.f) m_speed = 100.f;
+}
+
+bool BspDoor::near_activator(const Vec3& localPos) const
+{
+    if (!owner() || model_index() < 0) return false;
+    const auto& models = owner()->bsp_models();
+    if (model_index() >= (int)models.size()) return false;
+    const BspInstance::BspModel& model = models[model_index()];
+
+    Vec3 center = (model.mins + model.maxs) * 0.5f;
+    Vec3 dims = model.maxs - model.mins;
+    float triggerDist = std::max(dims.x, std::max(dims.y, dims.z)) + 96.f;
+    return (center - localPos).length() < triggerDist;
+}
+
+void BspDoor::link_teams(const std::vector<BspDoor*>& doors)
+{
+    std::unordered_map<std::string, std::vector<BspDoor*>> groups;
+    for (BspDoor* d : doors)
+    {
+        auto it = d->entity().keyValues.find("team");
+        if (it == d->entity().keyValues.end() || it->second.empty()) continue;
+        groups[it->second].push_back(d);
+    }
+    for (auto& kv : groups)
+    {
+        if (kv.second.size() < 2) continue; // solo "team" of one — nothing to link
+        for (BspDoor* d : kv.second) d->m_team = kv.second;
+    }
+}
+
+void BspDoor::on_update_mover(float dt)
+{
+    if (!owner() || model_index() < 0) return;
+
+    m_open = false;
+    if (m_activatorNode)
+    {
+        // World render space (post BspInstance scale/transform) -> this
+        // door's own raw map-unit space — the activator is usually the
+        // player's camera, which lives in world space (see demos/bsp/
+        // main.cpp).
+        Vec3 worldPos = m_activatorNode->get_global_position();
+        Vec3 localPos = Mat4::Inverse(owner()->get_world_matrix()) * worldPos;
+
+        // Team-linked doors (double doors, a bank of leaves — see
+        // link_teams()) open together: near ANY leaf opens the whole
+        // group, not just whichever one the player happens to be closest
+        // to. Every leaf runs this same check independently each frame,
+        // so they all agree without needing a "leader".
+        m_open = near_activator(localPos);
+        for (BspDoor* mate : m_team)
+            if (mate->near_activator(localPos)) { m_open = true; break; }
+
+        static const bool debugDoors = std::getenv("BSP_DEBUG_DOORS") != nullptr;
+        if (debugDoors)
+        {
+            gl::Log::Warn("[door] model=%d localPos=(%.0f,%.0f,%.0f) open=%d team=%zu "
+                          "openOff=(%.1f,%.1f,%.1f) offset=(%.1f,%.1f,%.1f)",
+                          model_index(), localPos.x, localPos.y, localPos.z, (int)m_open,
+                          m_team.size(), m_openOffset.x, m_openOffset.y, m_openOffset.z,
+                          offset().x, offset().y, offset().z);
+        }
+    }
+
+    Vec3 target = m_open ? m_openOffset : m_closedOffset;
+    Vec3 delta = target - offset();
+    float maxStep = m_speed * dt;
+    Vec3 next = (delta.length_squared() > maxStep * maxStep)
+                   ? offset() + delta.normalized() * maxStep
+                   : target;
+    set_offset(next);
 }

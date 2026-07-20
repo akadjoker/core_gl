@@ -261,7 +261,7 @@ gl::Texture* AssetManager::loadTexture(const char* name, const char* path, bool 
     tex->GenerateMipmaps();
     tex->SetFilter(gl::TextureFilter::LINEAR_MIPMAP_LINEAR, gl::TextureFilter::LINEAR);
     stbi_image_free(pixels);
-    gl::Log::Info("AssetManager: texture '%s' loaded from '%s' (%dx%d)", name, path, w, h);
+ //   gl::Log::Info("AssetManager: texture '%s' loaded from '%s' (%dx%d)", name, path, w, h);
 
     m_impl->textures[name] = tex;
     return tex;
