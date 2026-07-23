@@ -1453,6 +1453,22 @@ void main()
 }
 )";
 
+// raw shadow-map depth, one array layer, as grayscale — for looking at
+// what actually got rasterized into the depth map directly instead of
+// inferring it from receiver-side shading symptoms (SceneRenderer::
+// set_show_shadow_map)
+static const char* kShadowDebugFS = R"(
+in vec2 v_uv;
+out vec4 OutColor;
+uniform sampler2DArray u_tex;
+uniform int u_layer;
+void main()
+{
+    float d = texture(u_tex, vec3(v_uv, float(u_layer))).r;
+    OutColor = vec4(vec3(d), 1.0);
+}
+)";
+
 // ── terrain shader (texture splatting, multi-layer) ──
 static const char* kTerrainVS = R"(
 layout(location = 0) in vec3 a_position;

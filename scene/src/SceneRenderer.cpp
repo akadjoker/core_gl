@@ -259,6 +259,16 @@ bool SceneRenderer::init()
     m_debug.Bind();
     m_debug.SetInt("u_tex", 0);
 
+    if (!m_shadowDebug.LoadFromString(gl::PipelineStage::VERTEX, gl::Renderer::QuadShaderSource()) ||
+        !loadStage(m_shadowDebug, gl::PipelineStage::FRAGMENT, kShadowDebugFS) ||
+        !m_shadowDebug.Link())
+        return false;
+    m_locSDRect = m_shadowDebug.GetLocation("u_rect");
+    m_locSDTargetSize = m_shadowDebug.GetLocation("u_targetSize");
+    m_locSDLayer = m_shadowDebug.GetLocation("u_layer");
+    m_shadowDebug.Bind();
+    m_shadowDebug.SetInt("u_tex", 0);
+
     if (!loadStage(m_skyboxShader, gl::PipelineStage::VERTEX, kSkyVS) ||
         !loadStage(m_skyboxShader, gl::PipelineStage::FRAGMENT, kSkyboxFS) ||
         !m_skyboxShader.Link())
@@ -431,6 +441,7 @@ void SceneRenderer::release()
     m_postW = m_postH = 0;
     m_post_enabled = false;
     m_debug.Release();
+    m_shadowDebug.Release();
     m_depth.Release();
     m_pointDepth.Release();
     m_shadowTex.Release();
@@ -689,7 +700,7 @@ void SceneRenderer::draw_shadow_views(Scene& scene, Camera3D* camera)
     gl::Renderer::Viewport(0, 0, m_shadowSize, m_shadowSize);
     gl::Renderer::SetDepthTest(true);
     gl::Renderer::SetDepthWrite(true);
-    gl::Renderer::SetCull(gl::CullMode::NONE);
+    gl::Renderer::SetCull(m_shadowCullMode);
     gl::Renderer::SetPolygonOffset(true, m_shadowPolygonOffsetFactor, m_shadowPolygonOffsetUnits);
 
     m_depth.Bind();
@@ -2160,6 +2171,7 @@ void SceneRenderer::render(Scene& scene, int viewport_w, int viewport_h)
     }
 
     if (m_debug_views) draw_debug_views(viewport_w, viewport_h);
+    if (m_show_shadow_map) draw_shadow_map_debug(viewport_w, viewport_h);
 
     if (m_show_light_gizmos) draw_light_gizmos(proj * view);
     if (m_show_octree_debug) draw_octree_debug(proj * view);
@@ -2510,6 +2522,23 @@ void SceneRenderer::draw_debug_views(int viewport_w, int viewport_h)
     gl::Renderer::DrawQuad();
     w->refraction_tex().Bind(0);
     m_debug.SetVec4(m_locDRect, viewport_w - dw - pad, pad, dw, dh);
+    gl::Renderer::DrawQuad();
+    gl::Renderer::SetDepthTest(true);
+}
+
+void SceneRenderer::draw_shadow_map_debug(int viewport_w, int viewport_h)
+{
+    if (m_cascades <= 0 || !m_shadowTex.IsValid()) return;
+
+    gl::Renderer::SetDepthTest(false);
+    gl::Renderer::SetCull(gl::CullMode::NONE);
+    m_shadowDebug.Bind();
+    m_shadowDebug.SetVec2(m_locSDTargetSize, (float)viewport_w, (float)viewport_h);
+    m_shadowDebug.SetInt(m_locSDLayer, 0); // cascade 0 (nearest) only, for now
+
+    const float dw = viewport_w * 0.28f, dh = viewport_h * 0.28f, pad = 12.f;
+    m_shadowTex.Bind(0);
+    m_shadowDebug.SetVec4(m_locSDRect, pad, viewport_h - dh - pad, dw, dh);
     gl::Renderer::DrawQuad();
     gl::Renderer::SetDepthTest(true);
 }

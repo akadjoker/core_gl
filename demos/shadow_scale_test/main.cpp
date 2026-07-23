@@ -64,7 +64,9 @@ int main(int argc, char** argv)
     if (!app.Create("coregl - shadow scale test")) return 1;
     printf("controls: WASD move | Q/E down/up | left mouse look | LSHIFT fast | "
           "J/K normal bias -/+ | U/I polygon offset units -/+ | G/H polygon offset factor -/+ | "
-          "M cascade tint | N shadows on/off | X cycle shadow debug modes | F10 gif | ESC\n");
+          "M cascade tint | N shadows on/off | X cycle shadow debug modes | C cycle shadow "
+          "depth-pass cull mode | Z raw shadow map thumbnail | R reset to opengl-tutorial.org "
+          "#16's FRONT-cull fix | F10 gif | ESC\n");
 
     fs::getFilesystem().addFolder("../../../..");
     fs::getFilesystem().addFolder("../../../../..");
@@ -79,7 +81,13 @@ int main(int argc, char** argv)
     // what's actually on screen, spreading both texel resolution and
     // depth precision thin for no reason. No bias value fixes a
     // precision deficit, only reducing the wasted range does.
-    if (!renderer.init() || !renderer.enable_shadows(1, 2048, 20.f))
+    //
+    // resolution bumped 2048 -> 4096 to directly test whether the
+    // remaining artifact is a genuine precision/resolution limit (should
+    // visibly shrink) or something structural (won't change no matter
+    // how much resolution is thrown at it) — every standard bias/offset/
+    // cull-mode/geometry-thickness lever has been ruled out already.
+    if (!renderer.init() || !renderer.enable_shadows(1, 1024, 2.5f))
     {
         fprintf(stderr, "renderer init failed\n");
         app.Destroy();
@@ -234,6 +242,42 @@ int main(int argc, char** argv)
                         "off", "1: magenta = outside cascade box",
                         "2: raw occlusion grayscale (black=lit, white=shadowed)"};
                     printf("shadow debug mode: %s\n", names[debugMode]);
+                }
+                if (ev.key.keysym.sym == SDLK_c)
+                {
+                    static int cullMode = 0; // 0=NONE, 1=BACK, 2=FRONT
+                    cullMode = (cullMode + 1) % 3;
+                    gl::CullMode modes[3] = {gl::CullMode::NONE, gl::CullMode::BACK,
+                                             gl::CullMode::FRONT};
+                    const char* names[3] = {"NONE (both faces write depth)",
+                                            "BACK (only front faces write depth)",
+                                            "FRONT (only back faces write depth)"};
+                    renderer.set_shadow_cull_mode(modes[cullMode]);
+                    printf("shadow depth-pass cull mode: %s\n", names[cullMode]);
+                }
+                if (ev.key.keysym.sym == SDLK_z)
+                {
+                    static bool showMap = false;
+                    showMap = !showMap;
+                    renderer.set_show_shadow_map(showMap);
+                    printf("shadow map thumbnail (top-left, raw depth): %s\n",
+                          showMap ? "on" : "off");
+                }
+                if (ev.key.keysym.sym == SDLK_r)
+                {
+                    // the opengl-tutorial.org #16 fix, tested in isolation:
+                    // FRONT cull in the depth pass (only back faces write
+                    // depth — absorbs peter-panning into the caster's own
+                    // volume) needs its own bias, not whatever G/H/U/I
+                    // were left at from earlier experiments stacked on top
+                    normalBias = 0.f;
+                    polyFactor = 2.5f;
+                    polyUnits = 4.f;
+                    renderer.set_shadow_normal_bias(normalBias);
+                    renderer.set_shadow_polygon_offset(polyFactor, polyUnits);
+                    renderer.set_shadow_cull_mode(gl::CullMode::FRONT);
+                    printf("reset: FRONT cull, normal bias=0, polygon offset factor=2.5 "
+                          "units=4 (opengl-tutorial.org #16's fix, tested clean)\n");
                 }
             }
             if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT)

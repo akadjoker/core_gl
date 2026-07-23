@@ -133,7 +133,10 @@ int main(int argc, char** argv)
 
     SceneRenderer renderer;
  
-    if (!renderer.init() || !renderer.enable_shadows(4, 2024, 200.f))
+    // 120, not 200 — this map's own span is ~188 units; a needlessly
+    // large distance stretches each cascade's light-space box past what's
+    // actually on screen, wasting texel resolution and depth precision
+    if (!renderer.init() || !renderer.enable_shadows(4, 2048, 120.f))
     {
         fprintf(stderr, "renderer init failed\n");
         app.Destroy();

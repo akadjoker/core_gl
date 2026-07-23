@@ -145,6 +145,20 @@ public:
     // everywhere, bypassing lighting entirely (is the shadow test itself
     // wrong at a suspect line, or is the line introduced later?).
     void set_debug_shadow_clip(int mode) { m_debugShadowClip = mode; }
+    // cull mode used while rasterizing casters into the shadow depth map.
+    // Default NONE (both faces write depth) so single-sided open geometry
+    // (fences, thin walls with no back face) still casts a shadow at all;
+    // FRONT/BACK are useful for A/B testing whether a light-leak artifact
+    // is tied to which face of a caster gets rasterized.
+    void set_shadow_cull_mode(gl::CullMode mode) { m_shadowCullMode = mode; }
+    // debug: draws the raw shadow-map depth (cascade layer 0) as a
+    // grayscale thumbnail in the top-left corner — what actually got
+    // rasterized into the depth map, directly, instead of inferring it
+    // from receiver-side shading (black = near the light, white = far/no
+    // caster there — a caster's silhouette should read as a crisp dark
+    // shape with a clean edge; a fuzzy/missing edge there is a rasterization
+    // problem, not a bias one).
+    void set_show_shadow_map(bool on) { m_show_shadow_map = on; }
     void set_show_cascades(bool on) { m_show_cascades = on; } // debug tint
     // debug: fully disable/re-enable shadow sampling in the forward shader
     // without tearing down the shadow map (toggle at runtime, no realloc)
@@ -286,6 +300,7 @@ private:
                              float camNear, float camFar);
     void draw_mirror_surfaces(const Mat4& view, const Mat4& proj, const Vec3& cameraPos);
     void draw_debug_views(int viewport_w, int viewport_h);
+    void draw_shadow_map_debug(int viewport_w, int viewport_h);
     static void collect_water(Node* node, std::vector<WaterNode*>& out);
     static void collect_mirrors(Node* node, std::vector<MirrorNode*>& out);
     void draw_particles(const Mat4& viewProj);
@@ -351,6 +366,7 @@ private:
     float m_shadowPolygonOffsetFactor = 2.5f;
     float m_shadowPolygonOffsetUnits = 4.f;
     int m_debugShadowClip = 0;
+    gl::CullMode m_shadowCullMode = gl::CullMode::NONE;
     float m_splits[5] = {};
     Mat4 m_cascadeMat[4];
     bool m_show_cascades = false;
@@ -401,6 +417,13 @@ private:
     gl::Shader m_debug;
     gl::i32 m_locDRect = -1;
     gl::i32 m_locDTargetSize = -1;
+
+    // debug overlay: raw shadow-map depth (one array layer) as grayscale
+    gl::Shader m_shadowDebug;
+    gl::i32 m_locSDRect = -1;
+    gl::i32 m_locSDTargetSize = -1;
+    gl::i32 m_locSDLayer = -1;
+    bool m_show_shadow_map = false;
 
     // particle billboards: vertices already baked in world space by each
     // ParticleSystemNode, so the shader only applies viewProj
